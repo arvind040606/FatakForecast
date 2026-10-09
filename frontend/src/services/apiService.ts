@@ -29,12 +29,17 @@ class RailwayAPIService {
 
   public setAudioEnabled(enabled: boolean) {
     this.audioEnabled = enabled;
-    if (enabled && !this.audioContext) {
-      try {
-        const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-        this.audioContext = new AudioCtx();
-      } catch (e) {
-        console.warn('Web Audio not supported', e);
+    if (enabled) {
+      if (!this.audioContext) {
+        try {
+          const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+          this.audioContext = new AudioCtx();
+        } catch (e) {
+          console.warn('Web Audio not supported', e);
+        }
+      }
+      if (this.audioContext && this.audioContext.state === 'suspended') {
+        this.audioContext.resume();
       }
     }
   }
