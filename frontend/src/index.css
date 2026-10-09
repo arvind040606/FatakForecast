@@ -1,0 +1,415 @@
+/* ==========================================================================
+   FATAKFORECAST — AMRITSAR RAILWAY INTELLIGENCE PLATFORM
+   VISUAL DESIGN SYSTEM & COMPONENT TOKEN ARCHITECTURE
+   ========================================================================== */
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+@import "leaflet/dist/leaflet.css";
+
+:root {
+  /* Color Palette - Dark Navy & Charcoal Base */
+  --bg-primary: #070b14;
+  --bg-secondary: #0c1222;
+  --bg-surface: #111a30;
+  --bg-surface-elevated: #16223f;
+  --bg-surface-glass: rgba(16, 25, 46, 0.85);
+  --bg-panel-border: rgba(56, 189, 248, 0.12);
+  --bg-subtle-highlight: rgba(56, 189, 248, 0.04);
+
+  /* Cyan & Ice-Blue Accents */
+  --accent-cyan: #38bdf8;
+  --accent-cyan-light: #7dd3fc;
+  --accent-cyan-glow: rgba(56, 189, 248, 0.25);
+  --accent-blue-deep: #0284c7;
+
+  /* Railway Status Semantics */
+  --status-open: #10b981;
+  --status-open-glow: rgba(16, 185, 129, 0.25);
+  --status-open-bg: rgba(16, 185, 129, 0.12);
+  --status-open-border: rgba(16, 185, 129, 0.35);
+
+  --status-approaching: #f59e0b;
+  --status-approaching-glow: rgba(245, 158, 11, 0.3);
+  --status-approaching-bg: rgba(245, 158, 11, 0.12);
+  --status-approaching-border: rgba(245, 158, 11, 0.4);
+
+  --status-closed: #ef4444;
+  --status-closed-glow: rgba(239, 68, 68, 0.35);
+  --status-closed-bg: rgba(239, 68, 68, 0.14);
+  --status-closed-border: rgba(239, 68, 68, 0.45);
+
+  /* Typography Colors */
+  --text-white: #f8fafc;
+  --text-primary: #e2e8f0;
+  --text-secondary: #94a3b8;
+  --text-muted: #64748b;
+  --text-dim: #475569;
+
+  /* Layout dimensions */
+  --nav-height: 64px;
+  --sidebar-width: 250px;
+  --sidebar-collapsed-width: 72px;
+
+  /* Font Families */
+  --font-main: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/* Global Reset & Base */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body {
+  width: 100%;
+  height: 100%;
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: var(--font-main);
+  font-size: 14px;
+  line-height: 1.5;
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+#root {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--bg-secondary);
+}
+::-webkit-scrollbar-thumb {
+  background: #1e293b;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #334155;
+}
+
+/* Typography Utilities */
+.font-mono {
+  font-family: var(--font-mono);
+}
+
+/* Grid & Layout System */
+.app-container {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden;
+  background: radial-gradient(circle at 50% 0%, #0d1527 0%, #070b14 70%);
+}
+
+.app-body {
+  display: flex;
+  flex: 1;
+  height: calc(100vh - var(--nav-height));
+  position: relative;
+  overflow: hidden;
+}
+
+.main-viewport {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow-y: auto;
+  position: relative;
+  background-color: transparent;
+}
+
+/* Glass & Card Surfaces */
+.glass-panel {
+  background: var(--bg-surface-glass);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--bg-panel-border);
+  border-radius: 8px;
+}
+
+.card-surface {
+  background: var(--bg-surface);
+  border: 1px solid var(--bg-panel-border);
+  border-radius: 8px;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.card-surface:hover {
+  border-color: rgba(56, 189, 248, 0.28);
+}
+
+.card-surface-elevated {
+  background: var(--bg-surface-elevated);
+  border: 1px solid rgba(56, 189, 248, 0.18);
+  border-radius: 8px;
+}
+
+/* Operational Status Badges */
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  font-family: var(--font-mono);
+}
+
+.status-badge.open {
+  background-color: var(--status-open-bg);
+  color: var(--status-open);
+  border: 1px solid var(--status-open-border);
+}
+
+.status-badge.approaching {
+  background-color: var(--status-approaching-bg);
+  color: var(--status-approaching);
+  border: 1px solid var(--status-approaching-border);
+  animation: pulse-amber 2s infinite ease-in-out;
+}
+
+.status-badge.closed {
+  background-color: var(--status-closed-bg);
+  color: var(--status-closed);
+  border: 1px solid var(--status-closed-border);
+  animation: pulse-red 2s infinite ease-in-out;
+}
+
+/* Pulsing Status Dot */
+.status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.status-dot.open {
+  background-color: var(--status-open);
+  box-shadow: 0 0 8px var(--status-open);
+}
+
+.status-dot.approaching {
+  background-color: var(--status-approaching);
+  box-shadow: 0 0 8px var(--status-approaching);
+}
+
+.status-dot.closed {
+  background-color: var(--status-closed);
+  box-shadow: 0 0 8px var(--status-closed);
+}
+
+/* Keyframes */
+@keyframes pulse-amber {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.4);
+  }
+  50% {
+    box-shadow: 0 0 10px 2px rgba(245, 158, 11, 0.2);
+  }
+}
+
+@keyframes pulse-red {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4);
+  }
+  50% {
+    box-shadow: 0 0 12px 3px rgba(239, 68, 68, 0.25);
+  }
+}
+
+@keyframes radar-sweep {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+/* Leaflet Dark Customizations */
+.leaflet-container {
+  background-color: #080c16 !important;
+  font-family: var(--font-main) !important;
+  outline: none;
+}
+
+.leaflet-tile {
+  filter: brightness(0.68) invert(1) contrast(3.2) hue-rotate(200deg) saturate(0.35);
+}
+
+.leaflet-control-zoom {
+  border: 1px solid var(--bg-panel-border) !important;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5) !important;
+  border-radius: 6px !important;
+  overflow: hidden;
+}
+
+.leaflet-control-zoom a {
+  background-color: #0c1222 !important;
+  color: var(--accent-cyan) !important;
+  border-color: rgba(56, 189, 248, 0.15) !important;
+  transition: all 0.2s ease;
+}
+
+.leaflet-control-zoom a:hover {
+  background-color: #16223f !important;
+  color: #fff !important;
+}
+
+.leaflet-control-attribution {
+  background-color: rgba(7, 11, 20, 0.8) !important;
+  color: #64748b !important;
+  font-size: 10px !important;
+}
+
+.leaflet-control-attribution a {
+  color: #7dd3fc !important;
+}
+
+/* Leaflet Custom Marker Icons */
+.custom-crossing-marker {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.custom-crossing-marker:hover {
+  transform: scale(1.15);
+  z-index: 1000 !important;
+}
+
+.custom-train-marker {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: transform 0.4s ease;
+}
+
+/* Custom Leaflet Tooltip & Popup */
+.leaflet-popup-content-wrapper {
+  background: rgba(12, 18, 34, 0.95) !important;
+  border: 1px solid var(--accent-cyan-glow) !important;
+  color: var(--text-primary) !important;
+  border-radius: 8px !important;
+  backdrop-filter: blur(8px) !important;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.6) !important;
+  padding: 4px !important;
+}
+
+.leaflet-popup-tip {
+  background: #0c1222 !important;
+  border: 1px solid var(--accent-cyan-glow) !important;
+}
+
+/* Button & Interactive styles */
+.btn-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: linear-gradient(135deg, #0284c7 0%, #0369a1 100%);
+  color: #ffffff;
+  border: 1px solid rgba(56, 189, 248, 0.3);
+  padding: 7px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: 0 2px 8px rgba(2, 132, 199, 0.25);
+}
+
+.btn-primary:hover {
+  background: linear-gradient(135deg, #0369a1 0%, #0284c7 100%);
+  border-color: var(--accent-cyan);
+  box-shadow: 0 4px 14px rgba(56, 189, 248, 0.35);
+  transform: translateY(-1px);
+}
+
+.btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: #111a30;
+  color: var(--text-primary);
+  border: 1px solid rgba(56, 189, 248, 0.15);
+  padding: 7px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-secondary:hover {
+  background: #16223f;
+  color: var(--text-white);
+  border-color: rgba(56, 189, 248, 0.3);
+}
+
+.btn-danger {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(239, 68, 68, 0.15);
+  color: #f87171;
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  padding: 7px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-danger:hover {
+  background: rgba(239, 68, 68, 0.25);
+  border-color: #ef4444;
+}
+
+/* Telemetry Grid & Micro Indicators */
+.telemetry-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  font-size: 12px;
+}
+
+.telemetry-row:last-child {
+  border-bottom: none;
+}
+
+.telemetry-label {
+  color: var(--text-muted);
+}
+
+.telemetry-value {
+  color: var(--text-primary);
+  font-weight: 500;
+  font-family: var(--font-mono);
+}
+
+/* Reduced Motion Settings */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
