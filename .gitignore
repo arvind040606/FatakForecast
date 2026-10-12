@@ -6,10 +6,16 @@ backend/node_modules/
 # Production builds
 dist/
 frontend/dist/
+frontend/android/app/build/
+frontend/android/.gradle/
+.gradle/
 
 # Local environment
 .env
 .env.local
+.env.*
+backend/.env
+backend/.env.local
 .vercel
 
 # Logs & temp
@@ -19,3 +25,8 @@ yarn-debug.log*
 yarn-error.log*
 .DS_Store
 Thumbs.db
+scratch_*.mjs
+backend/scratch_*.js
+
+
+.vercel

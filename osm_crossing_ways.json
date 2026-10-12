@@ -1,0 +1,992 @@
+{
+  "version": 0.6,
+  "generator": "Overpass API 0.7.62.11 87bfad18",
+  "osm3s": {
+    "timestamp_osm_base": "2026-10-09T05:43:32Z",
+    "copyright": "The data included in this document is from www.openstreetmap.org. The data is made available under ODbL."
+  },
+  "elements": [
+    {
+      "type": "node",
+      "id": 331024406,
+      "tags": {
+        "railway": "level_crossing"
+      }
+    },
+    {
+      "type": "node",
+      "id": 567992474,
+      "tags": {
+        "railway": "level_crossing"
+      }
+    },
+    {
+      "type": "node",
+      "id": 568013319,
+      "tags": {
+        "railway": "level_crossing"
+      }
+    },
+    {
+      "type": "node",
+      "id": 568013331,
+      "tags": {
+        "railway": "level_crossing"
+      }
+    },
+    {
+      "type": "node",
+      "id": 568021277,
+      "tags": {
+        "railway": "level_crossing"
+      }
+    },
+    {
+      "type": "node",
+      "id": 1006139587,
+      "tags": {
+        "railway": "level_crossing"
+      }
+    },
+    {
+      "type": "node",
+      "id": 1006209216,
+      "tags": {
+        "railway": "level_crossing"
+      }
+    },
+    {
+      "type": "node",
+      "id": 1006212111,
+      "tags": {
+        "name": "Jaura Phatak",
+        "railway": "level_crossing"
+      }
+    },
+    {
+      "type": "node",
+      "id": 1006212137,
+      "tags": {
+        "name": "Jaura Phatak",
+        "railway": "level_crossing"
+      }
+    },
+    {
+      "type": "node",
+      "id": 1008050922,
+      "tags": {
+        "railway": "level_crossing"
+      }
+    },
+    {
+      "type": "node",
+      "id": 1008055097,
+      "tags": {
+        "railway": "level_crossing"
+      }
+    },
+    {
+      "type": "node",
+      "id": 1008058509,
+      "tags": {
+        "railway": "level_crossing"
+      }
+    },
+    {
+      "type": "node",
+      "id": 1009400208,
+      "tags": {
+        "railway": "level_crossing"
+      }
+    },
+    {
+      "type": "node",
+      "id": 1326294756,
+      "tags": {
+        "name": "RAILWAY LINE PATHANKOT",
+        "railway": "level_crossing"
+      }
+    },
+    {
+      "type": "node",
+      "id": 2552337544,
+      "tags": {
+        "railway": "level_crossing"
+      }
+    },
+    {
+      "type": "node",
+      "id": 2552337642,
+      "tags": {
+        "railway": "level_crossing"
+      }
+    },
+    {
+      "type": "node",
+      "id": 2552337650,
+      "tags": {
+        "railway": "level_crossing"
+      }
+    },
+    {
+      "type": "node",
+      "id": 2552337703,
+      "tags": {
+        "railway": "level_crossing"
+      }
+    },
+    {
+      "type": "node",
+      "id": 2552337715,
+      "tags": {
+        "railway": "level_crossing"
+      }
+    },
+    {
+      "type": "node",
+      "id": 2552363193,
+      "tags": {
+        "railway": "level_crossing",
+        "source": "bing"
+      }
+    },
+    {
+      "type": "node",
+      "id": 2552363195,
+      "tags": {
+        "railway": "level_crossing",
+        "source": "bing"
+      }
+    },
+    {
+      "type": "node",
+      "id": 3010887698,
+      "tags": {
+        "railway": "level_crossing"
+      }
+    },
+    {
+      "type": "node",
+      "id": 3499714097,
+      "tags": {
+        "railway": "level_crossing",
+        "source": "Bing"
+      }
+    },
+    {
+      "type": "node",
+      "id": 3499714137,
+      "tags": {
+        "railway": "level_crossing",
+        "source": "Bing"
+      }
+    },
+    {
+      "type": "node",
+      "id": 3821552840,
+      "tags": {
+        "railway": "level_crossing"
+      }
+    },
+    {
+      "type": "node",
+      "id": 3821829837,
+      "tags": {
+        "railway": "level_crossing"
+      }
+    },
+    {
+      "type": "node",
+      "id": 3821832764,
+      "tags": {
+        "railway": "level_crossing"
+      }
+    },
+    {
+      "type": "node",
+      "id": 3821832776,
+      "tags": {
+        "railway": "level_crossing"
+      }
+    },
+    {
+      "type": "node",
+      "id": 4882298199,
+      "tags": {
+        "railway": "level_crossing",
+        "source": "bing"
+      }
+    },
+    {
+      "type": "node",
+      "id": 6054757820,
+      "tags": {
+        "railway": "level_crossing"
+      }
+    },
+    {
+      "type": "node",
+      "id": 6054757832,
+      "tags": {
+        "railway": "level_crossing"
+      }
+    },
+    {
+      "type": "node",
+      "id": 6056058178,
+      "tags": {
+        "railway": "level_crossing"
+      }
+    },
+    {
+      "type": "node",
+      "id": 6056058179,
+      "tags": {
+        "railway": "level_crossing"
+      }
+    },
+    {
+      "type": "node",
+      "id": 6056058207,
+      "tags": {
+        "railway": "level_crossing"
+      }
+    },
+    {
+      "type": "node",
+      "id": 6056058208,
+      "tags": {
+        "railway": "level_crossing"
+      }
+    },
+    {
+      "type": "node",
+      "id": 6056058284,
+      "tags": {
+        "railway": "level_crossing"
+      }
+    },
+    {
+      "type": "node",
+      "id": 6056058285,
+      "tags": {
+        "railway": "level_crossing"
+      }
+    },
+    {
+      "type": "node",
+      "id": 6058292719,
+      "tags": {
+        "railway": "level_crossing"
+      }
+    },
+    {
+      "type": "node",
+      "id": 6058630893,
+      "tags": {
+        "railway": "level_crossing"
+      }
+    },
+    {
+      "type": "node",
+      "id": 6058630943,
+      "tags": {
+        "railway": "level_crossing"
+      }
+    },
+    {
+      "type": "node",
+      "id": 6063305950,
+      "tags": {
+        "railway": "level_crossing"
+      }
+    },
+    {
+      "type": "node",
+      "id": 6478072196,
+      "tags": {
+        "railway": "level_crossing"
+      }
+    },
+    {
+      "type": "node",
+      "id": 6478072278,
+      "tags": {
+        "railway": "level_crossing"
+      }
+    },
+    {
+      "type": "node",
+      "id": 8179551888,
+      "tags": {
+        "railway": "level_crossing"
+      }
+    },
+    {
+      "type": "node",
+      "id": 8748420305,
+      "tags": {
+        "railway": "level_crossing"
+      }
+    },
+    {
+      "type": "node",
+      "id": 10217021379,
+      "tags": {
+        "railway": "level_crossing"
+      }
+    },
+    {
+      "type": "node",
+      "id": 10217021387,
+      "tags": {
+        "railway": "level_crossing"
+      }
+    },
+    {
+      "type": "node",
+      "id": 10230371442,
+      "tags": {
+        "railway": "level_crossing"
+      }
+    },
+    {
+      "type": "node",
+      "id": 10230495136,
+      "tags": {
+        "railway": "level_crossing"
+      }
+    },
+    {
+      "type": "node",
+      "id": 10245922178,
+      "tags": {
+        "railway": "level_crossing"
+      }
+    },
+    {
+      "type": "node",
+      "id": 10246229914,
+      "tags": {
+        "railway": "level_crossing"
+      }
+    },
+    {
+      "type": "way",
+      "id": 30053564,
+      "tags": {
+        "highway": "trunk",
+        "lanes": "2",
+        "name": "State Highway 21",
+        "ref": "NH354",
+        "ref:old": "SH21",
+        "source": "Yahoo hires",
+        "surface": "asphalt"
+      }
+    },
+    {
+      "type": "way",
+      "id": 44715983,
+      "tags": {
+        "electrified": "rail",
+        "frequency": "50",
+        "gauge": "1676",
+        "maxspeed": "60",
+        "name": "JDL-ASR UP MAIN",
+        "operator": "NR",
+        "passenger_lines": "2",
+        "railway": "rail",
+        "usage": "main",
+        "voltage": "25000"
+      }
+    },
+    {
+      "type": "way",
+      "id": 44716201,
+      "tags": {
+        "electrified": "contact_line",
+        "frequency": "50",
+        "gauge": "1676",
+        "passenger_lines": "2",
+        "railway": "rail",
+        "usage": "main",
+        "voltage": "25000"
+      }
+    },
+    {
+      "type": "way",
+      "id": 44794114,
+      "tags": {
+        "electrified": "contact_line",
+        "frequency": "50",
+        "gauge": "1676",
+        "passenger_lines": "1",
+        "railway": "rail",
+        "source": "Yahoo hires",
+        "usage": "main",
+        "voltage": "25000"
+      }
+    },
+    {
+      "type": "way",
+      "id": 44794257,
+      "tags": {
+        "electrified": "contact_line",
+        "frequency": "50",
+        "gauge": "1676",
+        "passenger_lines": "1",
+        "railway": "rail",
+        "source": "Yahoo hires",
+        "usage": "main",
+        "voltage": "25000"
+      }
+    },
+    {
+      "type": "way",
+      "id": 44794288,
+      "tags": {
+        "highway": "tertiary"
+      }
+    },
+    {
+      "type": "way",
+      "id": 44795796,
+      "tags": {
+        "highway": "tertiary",
+        "source": "Yahoo hires"
+      }
+    },
+    {
+      "type": "way",
+      "id": 44796500,
+      "tags": {
+        "highway": "tertiary",
+        "source": "Yahoo hires"
+      }
+    },
+    {
+      "type": "way",
+      "id": 86550046,
+      "tags": {
+        "highway": "residential"
+      }
+    },
+    {
+      "type": "way",
+      "id": 86578107,
+      "tags": {
+        "electrified": "contact_line",
+        "frequency": "50",
+        "gauge": "1676",
+        "passenger_lines": "1",
+        "railway": "rail",
+        "source": "Yahoo hires",
+        "usage": "main",
+        "voltage": "25000"
+      }
+    },
+    {
+      "type": "way",
+      "id": 86666940,
+      "tags": {
+        "highway": "tertiary"
+      }
+    },
+    {
+      "type": "way",
+      "id": 86667555,
+      "tags": {
+        "highway": "secondary",
+        "source": "Yahoo hires",
+        "surface": "unpaved"
+      }
+    },
+    {
+      "type": "way",
+      "id": 86772314,
+      "tags": {
+        "highway": "secondary",
+        "source": "Yahoo hires"
+      }
+    },
+    {
+      "type": "way",
+      "id": 86772353,
+      "tags": {
+        "highway": "tertiary"
+      }
+    },
+    {
+      "type": "way",
+      "id": 179973867,
+      "tags": {
+        "highway": "residential",
+        "name": "Old Batala Road",
+        "ref:old": "NH15"
+      }
+    },
+    {
+      "type": "way",
+      "id": 248433976,
+      "tags": {
+        "electrified": "rail",
+        "frequency": "50",
+        "gauge": "1676",
+        "name": "ASR-JDL DOWN MAIN",
+        "operator": "NR",
+        "passenger_lines": "2",
+        "railway": "rail",
+        "source": "GPS",
+        "usage": "main",
+        "voltage": "25000"
+      }
+    },
+    {
+      "type": "way",
+      "id": 248434027,
+      "tags": {
+        "electrified": "contact_line",
+        "frequency": "50",
+        "gauge": "1676",
+        "passenger_lines": "2",
+        "railway": "rail",
+        "source": "GPS",
+        "usage": "main",
+        "voltage": "25000"
+      }
+    },
+    {
+      "type": "way",
+      "id": 248434028,
+      "tags": {
+        "electrified": "contact_line",
+        "frequency": "50",
+        "gauge": "1676",
+        "passenger_lines": "2",
+        "railway": "rail",
+        "source": "GPS",
+        "usage": "main",
+        "voltage": "25000"
+      }
+    },
+    {
+      "type": "way",
+      "id": 248434029,
+      "tags": {
+        "electrified": "contact_line",
+        "frequency": "50",
+        "gauge": "1676",
+        "passenger_lines": "2",
+        "railway": "rail",
+        "source": "GPS",
+        "usage": "main",
+        "voltage": "25000"
+      }
+    },
+    {
+      "type": "way",
+      "id": 248436874,
+      "tags": {
+        "gauge": "1676",
+        "railway": "rail",
+        "source:geometry": "bing",
+        "usage": "branch"
+      }
+    },
+    {
+      "type": "way",
+      "id": 248436875,
+      "tags": {
+        "date:start": "1884",
+        "electrified": "contact_line",
+        "frequency": "50",
+        "gauge": "1676",
+        "passenger_lines": "1",
+        "railway": "rail",
+        "source": "landsat",
+        "usage": "main",
+        "voltage": "25000"
+      }
+    },
+    {
+      "type": "way",
+      "id": 248436889,
+      "tags": {
+        "gauge": "1676",
+        "name": "North Western railway Verka Jassar Branch",
+        "railway": "rail",
+        "source:name": "geonames.nga.mil",
+        "usage": "branch"
+      }
+    },
+    {
+      "type": "way",
+      "id": 248440469,
+      "tags": {
+        "date:start": "1884",
+        "electrified": "contact_line",
+        "frequency": "50",
+        "gauge": "1676",
+        "passenger_lines": "1",
+        "railway": "rail",
+        "source": "landsat",
+        "usage": "main",
+        "voltage": "25000"
+      }
+    },
+    {
+      "type": "way",
+      "id": 324484982,
+      "tags": {
+        "highway": "tertiary",
+        "ref": "ODR20"
+      }
+    },
+    {
+      "type": "way",
+      "id": 343047875,
+      "tags": {
+        "highway": "unclassified",
+        "source": "Bing"
+      }
+    },
+    {
+      "type": "way",
+      "id": 378755079,
+      "tags": {
+        "highway": "track"
+      }
+    },
+    {
+      "type": "way",
+      "id": 378809068,
+      "tags": {
+        "highway": "tertiary"
+      }
+    },
+    {
+      "type": "way",
+      "id": 378809069,
+      "tags": {
+        "highway": "unclassified"
+      }
+    },
+    {
+      "type": "way",
+      "id": 411263491,
+      "tags": {
+        "electrified": "contact_line",
+        "frequency": "50",
+        "gauge": "1676",
+        "passenger_lines": "1",
+        "railway": "rail",
+        "source": "GPS",
+        "usage": "main",
+        "voltage": "25000"
+      }
+    },
+    {
+      "type": "way",
+      "id": 411263492,
+      "tags": {
+        "electrified": "contact_line",
+        "frequency": "50",
+        "gauge": "1676",
+        "passenger_lines": "1",
+        "railway": "rail",
+        "source": "Yahoo hires",
+        "usage": "main",
+        "voltage": "25000"
+      }
+    },
+    {
+      "type": "way",
+      "id": 496527692,
+      "tags": {
+        "highway": "unclassified"
+      }
+    },
+    {
+      "type": "way",
+      "id": 569280122,
+      "tags": {
+        "highway": "tertiary"
+      }
+    },
+    {
+      "type": "way",
+      "id": 643378252,
+      "tags": {
+        "highway": "unclassified"
+      }
+    },
+    {
+      "type": "way",
+      "id": 643378264,
+      "tags": {
+        "highway": "unclassified",
+        "surface": "paved"
+      }
+    },
+    {
+      "type": "way",
+      "id": 643555335,
+      "tags": {
+        "highway": "unclassified"
+      }
+    },
+    {
+      "type": "way",
+      "id": 643555338,
+      "tags": {
+        "highway": "tertiary"
+      }
+    },
+    {
+      "type": "way",
+      "id": 643555344,
+      "tags": {
+        "highway": "tertiary"
+      }
+    },
+    {
+      "type": "way",
+      "id": 643941711,
+      "tags": {
+        "highway": "residential"
+      }
+    },
+    {
+      "type": "way",
+      "id": 643941719,
+      "tags": {
+        "highway": "unclassified"
+      }
+    },
+    {
+      "type": "way",
+      "id": 644853455,
+      "tags": {
+        "highway": "unclassified"
+      }
+    },
+    {
+      "type": "way",
+      "id": 662006114,
+      "tags": {
+        "date:start": "1884",
+        "electrified": "contact_line",
+        "frequency": "50",
+        "gauge": "1676",
+        "passenger_lines": "1",
+        "railway": "rail",
+        "source": "landsat",
+        "usage": "main",
+        "voltage": "25000"
+      }
+    },
+    {
+      "type": "way",
+      "id": 925032739,
+      "tags": {
+        "electrified": "contact_line",
+        "frequency": "50",
+        "gauge": "1676",
+        "passenger_lines": "1",
+        "railway": "rail",
+        "source": "Yahoo hires",
+        "usage": "main",
+        "voltage": "25000"
+      }
+    },
+    {
+      "type": "way",
+      "id": 944967927,
+      "tags": {
+        "electrified": "contact_line",
+        "frequency": "50",
+        "gauge": "1676",
+        "passenger_lines": "2",
+        "railway": "rail",
+        "source": "GPS",
+        "usage": "main",
+        "voltage": "25000"
+      }
+    },
+    {
+      "type": "way",
+      "id": 944967932,
+      "tags": {
+        "fixme": "the is possibly an obsolete condition",
+        "railway": "rail",
+        "source": "bing"
+      }
+    },
+    {
+      "type": "way",
+      "id": 1117035038,
+      "tags": {
+        "highway": "tertiary",
+        "source": "Yahoo hires"
+      }
+    },
+    {
+      "type": "way",
+      "id": 1117133669,
+      "tags": {
+        "highway": "unclassified",
+        "source": "maxar"
+      }
+    },
+    {
+      "type": "way",
+      "id": 1117774094,
+      "tags": {
+        "highway": "unclassified",
+        "surface": "paved"
+      }
+    },
+    {
+      "type": "way",
+      "id": 1117796518,
+      "tags": {
+        "highway": "unclassified"
+      }
+    },
+    {
+      "type": "way",
+      "id": 1117801721,
+      "tags": {
+        "highway": "residential",
+        "source": "maxar"
+      }
+    },
+    {
+      "type": "way",
+      "id": 1117955650,
+      "tags": {
+        "highway": "unclassified",
+        "source": "maxar"
+      }
+    },
+    {
+      "type": "way",
+      "id": 1118563381,
+      "tags": {
+        "highway": "tertiary"
+      }
+    },
+    {
+      "type": "way",
+      "id": 1118575663,
+      "tags": {
+        "highway": "service",
+        "source": "maxar"
+      }
+    },
+    {
+      "type": "way",
+      "id": 1119746387,
+      "tags": {
+        "highway": "residential"
+      }
+    },
+    {
+      "type": "way",
+      "id": 1120096250,
+      "tags": {
+        "highway": "unclassified"
+      }
+    },
+    {
+      "type": "way",
+      "id": 1120283732,
+      "tags": {
+        "highway": "tertiary"
+      }
+    },
+    {
+      "type": "way",
+      "id": 1256633206,
+      "tags": {
+        "electrified": "contact_line",
+        "frequency": "50",
+        "passenger_lines": "2",
+        "railway": "rail",
+        "usage": "main",
+        "voltage": "25000"
+      }
+    },
+    {
+      "type": "relation",
+      "id": 5561601,
+      "tags": {
+        "name": "Ambala - Amritsar railway line",
+        "route": "railway",
+        "type": "route"
+      }
+    },
+    {
+      "type": "relation",
+      "id": 7835299,
+      "tags": {
+        "is_in:state": "PB",
+        "name": "NH354",
+        "network": "IN:NH",
+        "ref": "354",
+        "route": "road",
+        "type": "route",
+        "wikidata": "Q58482898",
+        "wikipedia": "en:National Highway 354 (India)"
+      }
+    },
+    {
+      "type": "relation",
+      "id": 9202429,
+      "tags": {
+        "type": "tracks"
+      }
+    },
+    {
+      "type": "relation",
+      "id": 9202431,
+      "tags": {
+        "type": "tracks"
+      }
+    },
+    {
+      "type": "relation",
+      "id": 9202432,
+      "tags": {
+        "type": "tracks"
+      }
+    },
+    {
+      "type": "relation",
+      "id": 9202631,
+      "tags": {
+        "name": "Ambala - Amritsar (1)",
+        "note": "single-track relation",
+        "type": "tracks"
+      }
+    },
+    {
+      "type": "relation",
+      "id": 10392567,
+      "tags": {
+        "name": "FG S1",
+        "site": "station",
+        "type": "site"
+      }
+    },
+    {
+      "type": "relation",
+      "id": 10392568,
+      "tags": {
+        "name": "FG S9",
+        "site": "station",
+        "type": "site"
+      }
+    }
+  ]
+}

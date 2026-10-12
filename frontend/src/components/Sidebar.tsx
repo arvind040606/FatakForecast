@@ -1,126 +1,144 @@
 import React from 'react';
 import { 
-  LayoutDashboard, 
-  Map, 
+  Home, 
   GitFork, 
   Clock, 
   Train, 
+  Navigation,
   BarChart3, 
   Activity, 
+  Bookmark,
+  Bell,
+  Settings,
   ChevronLeft, 
-  ChevronRight,
-  ShieldCheck
+  ChevronRight
 } from 'lucide-react';
-import { ActiveView, OperationalMetrics } from '../types';
+import { ActiveRoute, OperationalMetrics } from '../types';
 
 interface SidebarProps {
-  activeView: ActiveView;
-  onViewChange: (view: ActiveView) => void;
+  currentRoute: ActiveRoute;
+  onRouteChange: (route: ActiveRoute) => void;
   metrics: OperationalMetrics;
   collapsed: boolean;
   onToggleCollapse: () => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
-  activeView,
-  onViewChange,
+  currentRoute,
+  onRouteChange,
   metrics,
   collapsed,
   onToggleCollapse
 }) => {
   const navItems = [
     {
-      id: 'overview' as ActiveView,
-      label: 'Overview',
-      icon: LayoutDashboard,
+      route: '/' as ActiveRoute,
+      label: 'Home & Overview',
+      icon: Home,
       badge: null
     },
     {
-      id: 'map' as ActiveView,
-      label: 'Live Railway Map',
-      icon: Map,
-      badge: 'LIVE'
+      route: '/planner' as ActiveRoute,
+      label: 'Smart Journey',
+      icon: Navigation,
+      badge: 'Smart',
+      badgeColor: 'var(--accent-primary)',
+      badgeBg: 'var(--surface-green)'
     },
     {
-      id: 'crossings' as ActiveView,
-      label: 'All Crossings',
+      route: '/crossings' as ActiveRoute,
+      label: 'Crossings & Closures',
       icon: GitFork,
-      badge: `${metrics.totalCrossings}`
+      badge: metrics.closedCount > 0 ? `${metrics.closedCount} Closed` : `${metrics.totalCrossings}`,
+      badgeColor: metrics.closedCount > 0 ? 'var(--status-closed)' : undefined,
+      badgeBg: metrics.closedCount > 0 ? 'var(--status-closed-bg)' : undefined
     },
     {
-      id: 'upcoming' as ActiveView,
-      label: 'Upcoming Closures',
-      icon: Clock,
-      badge: metrics.closedCount > 0 || metrics.approachingCount > 0 
-        ? `${metrics.closedCount + metrics.approachingCount}` 
-        : null,
-      badgeColor: metrics.closedCount > 0 ? 'var(--status-closed)' : 'var(--status-approaching)'
-    },
-    {
-      id: 'trains' as ActiveView,
+      route: '/trains' as ActiveRoute,
       label: 'Train Movements',
       icon: Train,
       badge: `${metrics.activeSectorTrains}`
     },
     {
-      id: 'analytics' as ActiveView,
-      label: 'Forecast Analytics',
+      route: '/saved-places' as ActiveRoute,
+      label: 'Saved Places',
+      icon: Bookmark,
+      badge: null
+    },
+    {
+      route: '/notifications' as ActiveRoute,
+      label: 'Notifications',
+      icon: Bell,
+      badge: null
+    },
+    {
+      route: '/analytics' as ActiveRoute,
+      label: 'Analytics',
       icon: BarChart3,
       badge: null
     },
     {
-      id: 'health' as ActiveView,
+      route: '/data-health' as ActiveRoute,
       label: 'Data Health',
       icon: Activity,
-      badge: 'OK',
-      badgeColor: 'var(--status-open)'
+      badge: null
+    },
+    {
+      route: '/settings' as ActiveRoute,
+      label: 'Settings',
+      icon: Settings,
+      badge: null
     }
   ];
 
   return (
     <aside style={{
       width: collapsed ? 'var(--sidebar-collapsed-width)' : 'var(--sidebar-width)',
-      backgroundColor: 'var(--bg-secondary)',
-      borderRight: '1px solid var(--bg-panel-border)',
+      backgroundColor: '#FFFFFF',
+      borderRight: '1px solid var(--border-soft)',
       display: 'flex',
       flexDirection: 'column',
       justifyContent: 'space-between',
-      transition: 'width 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
-      zIndex: 40,
-      userSelect: 'none'
+      transition: 'width 0.2s cubic-bezier(0.16, 1, 0.3, 1)',
+      zIndex: 30,
+      userSelect: 'none',
+      flexShrink: 0,
+      boxShadow: '1px 0 3px rgba(36, 40, 36, 0.03)'
     }}>
-      {/* NAVIGATION LIST */}
-      <div style={{ padding: '16px 10px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-        <div style={{
-          padding: '0 8px 8px 8px',
-          fontSize: '10px',
-          fontWeight: 700,
-          textTransform: 'uppercase',
-          letterSpacing: '0.08em',
-          color: 'var(--text-muted)',
-          display: collapsed ? 'none' : 'block'
-        }}>
-          Operations Deck
-        </div>
+      {/* NAVIGATION ITEMS */}
+      <div style={{ padding: '16px 10px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+        {!collapsed && (
+          <div style={{
+            padding: '4px 10px 10px',
+            fontSize: '11px',
+            fontWeight: 700,
+            textTransform: 'uppercase',
+            letterSpacing: '0.06em',
+            color: 'var(--text-muted)',
+            fontFamily: 'var(--font-brand)'
+          }}>
+            Navigation
+          </div>
+        )}
 
         {navItems.map(item => {
           const Icon = item.icon;
-          const isActive = activeView === item.id;
+          const isActive = currentRoute === item.route || (item.route === '/crossings' && currentRoute === '/forecasts');
 
           return (
             <button
-              key={item.id}
-              onClick={() => onViewChange(item.id)}
+              key={item.route}
+              onClick={() => onRouteChange(item.route)}
               title={collapsed ? item.label : undefined}
               style={{
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: collapsed ? 'center' : 'space-between',
-                padding: '10px 12px',
-                borderRadius: '6px',
-                background: isActive ? 'rgba(56, 189, 248, 0.12)' : 'transparent',
-                border: isActive ? '1px solid rgba(56, 189, 248, 0.3)' : '1px solid transparent',
-                color: isActive ? 'var(--text-white)' : 'var(--text-secondary)',
+                padding: '9px 12px',
+                borderRadius: 'var(--radius-md)',
+                backgroundColor: isActive ? 'var(--surface-green)' : 'transparent',
+                border: isActive ? '1px solid var(--surface-green-border)' : '1px solid transparent',
+                color: isActive ? 'var(--accent-emphasis)' : 'var(--text-primary)',
                 cursor: 'pointer',
                 transition: 'all 0.15s ease',
                 width: '100%',
@@ -128,26 +146,26 @@ export const Sidebar: React.FC<SidebarProps> = ({
               }}
               onMouseEnter={(e) => {
                 if (!isActive) {
-                  e.currentTarget.style.background = 'rgba(255, 255, 255, 0.04)';
-                  e.currentTarget.style.color = 'var(--text-primary)';
+                  e.currentTarget.style.backgroundColor = '#FAF9F5';
+                  e.currentTarget.style.color = 'var(--accent-primary)';
                 }
               }}
               onMouseLeave={(e) => {
                 if (!isActive) {
-                  e.currentTarget.style.background = 'transparent';
-                  e.currentTarget.style.color = 'var(--text-secondary)';
+                  e.currentTarget.style.backgroundColor = 'transparent';
+                  e.currentTarget.style.color = 'var(--text-primary)';
                 }
               }}
             >
-              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                 <Icon 
-                  size={18} 
-                  color={isActive ? 'var(--accent-cyan)' : 'currentColor'} 
+                  size={17} 
+                  color={isActive ? 'var(--accent-primary)' : 'var(--text-secondary)'} 
                 />
                 {!collapsed && (
                   <span style={{ 
                     fontSize: '13px', 
-                    fontWeight: isActive ? 600 : 500,
+                    fontWeight: isActive ? 700 : 500,
                     letterSpacing: '-0.01em'
                   }}>
                     {item.label}
@@ -157,14 +175,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
               {!collapsed && item.badge && (
                 <span style={{
-                  fontSize: '10px',
-                  fontWeight: 700,
+                  fontSize: '10.5px',
+                  fontWeight: 600,
                   fontFamily: 'var(--font-mono)',
-                  padding: '2px 6px',
-                  borderRadius: '10px',
-                  backgroundColor: item.badgeColor ? `${item.badgeColor}22` : 'rgba(56, 189, 248, 0.15)',
-                  color: item.badgeColor || 'var(--accent-cyan)',
-                  border: `1px solid ${item.badgeColor || 'rgba(56, 189, 248, 0.3)'}`
+                  padding: '2px 7px',
+                  borderRadius: 'var(--radius-full)',
+                  backgroundColor: item.badgeBg || '#FAF9F5',
+                  color: item.badgeColor || 'var(--text-secondary)',
+                  border: `1px solid ${item.badgeColor ? 'currentColor' : 'var(--border-subtle)'}`
                 }}>
                   {item.badge}
                 </span>
@@ -174,66 +192,24 @@ export const Sidebar: React.FC<SidebarProps> = ({
         })}
       </div>
 
-      {/* FOOTER & COLLAPSE TOGGLE */}
+      {/* SIDEBAR FOOTER */}
       <div style={{
-        padding: '14px 10px',
-        borderTop: '1px solid var(--bg-panel-border)',
+        padding: '12px 10px',
+        borderTop: '1px solid var(--border-soft)',
         display: 'flex',
-        flexDirection: 'column',
-        gap: '10px'
+        justifyContent: 'center'
       }}>
-        {!collapsed && (
-          <div style={{
-            background: 'rgba(17, 26, 48, 0.5)',
-            border: '1px solid var(--bg-panel-border)',
-            borderRadius: '6px',
-            padding: '10px',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px'
-          }}>
-            <ShieldCheck size={18} color="var(--status-open)" />
-            <div>
-              <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-primary)' }}>
-                Firozpur Division
-              </div>
-              <div style={{ fontSize: '9px', color: 'var(--text-muted)' }}>
-                Certified Northern Railway Sector
-              </div>
-            </div>
-          </div>
-        )}
-
         <button
           onClick={onToggleCollapse}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: '8px',
-            padding: '8px',
-            background: 'transparent',
-            border: '1px solid var(--bg-panel-border)',
-            borderRadius: '6px',
-            color: 'var(--text-muted)',
-            cursor: 'pointer',
-            fontSize: '11px',
-            transition: 'all 0.15s ease'
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.color = 'var(--text-primary)';
-            e.currentTarget.style.borderColor = 'rgba(56, 189, 248, 0.3)';
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.color = 'var(--text-muted)';
-            e.currentTarget.style.borderColor = 'var(--bg-panel-border)';
-          }}
+          className="btn btn-ghost"
+          style={{ width: '100%', padding: '8px', fontSize: '12px', color: 'var(--text-secondary)' }}
+          title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
         >
           {collapsed ? <ChevronRight size={16} /> : (
-            <>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <ChevronLeft size={16} />
               <span>Collapse Sidebar</span>
-            </>
+            </div>
           )}
         </button>
       </div>

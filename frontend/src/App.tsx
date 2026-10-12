@@ -1,19 +1,22 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Navbar } from './components/Navbar';
 import { Sidebar } from './components/Sidebar';
-import { MetricsBar } from './components/MetricsBar';
-import { DrillModal } from './components/DrillModal';
-import { OverviewView } from './views/OverviewView';
+import { BottomNav } from './components/BottomNav';
+import { CrossingDetailPanel } from './components/CrossingDetailPanel';
+
+import { HomeView } from './views/HomeView';
 import { CrossingsView } from './views/CrossingsView';
 import { UpcomingClosuresView } from './views/UpcomingClosuresView';
 import { TrainMovementsView } from './views/TrainMovementsView';
 import { AnalyticsView } from './views/AnalyticsView';
 import { DataHealthView } from './views/DataHealthView';
-import { RailwayMap } from './components/RailwayMap';
-import { CrossingDetailPanel } from './components/CrossingDetailPanel';
+import { JourneyPlannerView } from './views/JourneyPlannerView';
+import { SavedPlacesView } from './views/SavedPlacesView';
+import { NotificationsView } from './views/NotificationsView';
+import { SettingsView } from './views/SettingsView';
 
 import { 
-  ActiveView, 
+  ActiveRoute, 
   RailwayCrossing, 
   SectorTrain, 
   RailwayCorridor, 
@@ -21,19 +24,48 @@ import {
   TelemetryPayload 
 } from './types';
 import { railwayApi } from './services/apiService';
+import { nativeService } from './services/nativeService';
 import { 
   INITIAL_CROSSINGS, 
   INITIAL_TRAINS, 
   INITIAL_CORRIDORS, 
   INITIAL_METRICS 
 } from './services/amritsarData';
+import { WifiOff, RefreshCw } from 'lucide-react';
+import { findImpactingTrainForCrossing } from './utils/trainHelpers';
+
+import { AnimatePresence } from 'framer-motion';
+import { CinematicIntro } from './components/CinematicIntro';
+import { App as CapApp } from '@capacitor/app';
+
+// Map pathnames to valid ActiveRoute
+function getInitialRoute(): ActiveRoute {
+  const path = window.location.pathname;
+  if (path === '/crossings') return '/crossings';
+  if (path === '/forecasts') return '/forecasts';
+  if (path === '/trains') return '/trains';
+  if (path === '/planner') return '/planner';
+  if (path === '/saved-places') return '/saved-places';
+  if (path === '/notifications') return '/notifications';
+  if (path === '/data-health') return '/data-health';
+  if (path === '/settings') return '/settings';
+  if (path === '/analytics') return '/analytics';
+  return '/';
+}
 
 export function App() {
-  const [activeView, setActiveView] = useState<ActiveView>('overview');
+  const [currentRoute, setCurrentRoute] = useState<ActiveRoute>(getInitialRoute);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [selectedCrossing, setSelectedCrossing] = useState<RailwayCrossing | null>(null);
-  const [drillModalOpen, setDrillModalOpen] = useState(false);
-  const [drillInitialCrossing, setDrillInitialCrossing] = useState<RailwayCrossing | null>(null);
+  const [selectedTrain, setSelectedTrain] = useState<SectorTrain | null>(null);
+  const [isOnline, setIsOnline] = useState<boolean>(true);
+  const [showIntro, setShowIntro] = useState<boolean>(() => {
+    try {
+      return !sessionStorage.getItem('fatak_intro_seen');
+    } catch {
+      return false;
+    }
+  });
 
   // Live telemetry state
   const [crossings, setCrossings] = useState<RailwayCrossing[]>(INITIAL_CROSSINGS);
@@ -44,6 +76,57 @@ export function App() {
 
   // Track previous crossing statuses to trigger audio alerts on state change
   const prevStatusesRef = useRef<Map<string, string>>(new Map());
+
+  // Browser navigation popstate listener
+  useEffect(() => {
+    const handlePopState = () => {
+      setCurrentRoute(getInitialRoute());
+    };
+    window.addEventListener('popstate', handlePopState);
+
+    // Native Android Hardware Back Button Handler
+    let backSub: any = null;
+    try {
+      backSub = CapApp.addListener('backButton', () => {
+        if (selectedCrossing) {
+          setSelectedCrossing(null);
+        } else if (window.location.pathname !== '/') {
+          navigateTo('/');
+        } else {
+          CapApp.exitApp();
+        }
+      });
+    } catch (e) {}
+
+    return () => {
+      window.removeEventListener('popstate', handlePopState);
+      if (backSub) {
+        backSub.then((s: any) => s?.remove?.()).catch(() => {});
+      }
+    };
+  }, [selectedCrossing]);
+
+  // Online / offline listeners
+  useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+
+    setIsOnline(navigator.onLine);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
+  const navigateTo = (route: ActiveRoute) => {
+    if (window.location.pathname !== route) {
+      window.history.pushState({}, '', route);
+    }
+    setCurrentRoute(route);
+  };
 
   useEffect(() => {
     // Initial fetch
@@ -88,125 +171,191 @@ export function App() {
         const updated = payload.crossings.find(item => item.id === current.id);
         return updated || current;
       });
+
+      // Update selected train with latest live telemetry
+      setSelectedTrain(current => {
+        if (!current) return null;
+        const updated = payload.trains.find(t => t.id === current.id || String(t.number) === String(current.number));
+        return updated || current;
+      });
     });
+
+    // Periodic check for due Smart Commute Alarms (evaluates current time, weekdays/weekends, GPS)
+    const alarmInterval = setInterval(() => {
+      nativeService.evaluateAndTriggerDueAlarms();
+    }, 25000);
 
     return () => {
       unsubscribe();
+      clearInterval(alarmInterval);
     };
   }, []);
 
-  const handleOpenDrill = (crossing?: RailwayCrossing) => {
-    setDrillInitialCrossing(crossing || null);
-    setDrillModalOpen(true);
+  const handleSelectCrossingAndOpenDetails = (crossing: RailwayCrossing, train?: SectorTrain | null) => {
+    const impacting = train || findImpactingTrainForCrossing(crossing, trains);
+    setSelectedCrossing(crossing);
+    setSelectedTrain(impacting || null);
   };
 
   return (
-    <div className="app-container">
-      {/* TOP NAVIGATION */}
-      <Navbar
+    <div className="app-shell">
+      {/* PERSISTENT SIDEBAR FOR DESKTOP / TABLET */}
+      <Sidebar
+        currentRoute={currentRoute}
+        onRouteChange={navigateTo}
         metrics={metrics}
-        crossings={crossings}
-        onSelectCrossing={(c) => {
-          setSelectedCrossing(c);
-          setActiveView('overview');
-        }}
-        onOpenDrillModal={() => handleOpenDrill()}
-        lastUpdateTimestamp={lastUpdate}
+        collapsed={sidebarCollapsed}
+        onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
       />
 
-      {/* METRICS QUICK STATS BAR */}
-      <MetricsBar metrics={metrics} />
-
-      {/* BODY WITH SIDEBAR & MAIN VIEW */}
-      <div className="app-body">
-        <Sidebar
-          activeView={activeView}
-          onViewChange={(view) => setActiveView(view)}
+      {/* MAIN VIEWPORT */}
+      <div className="app-main">
+        {/* TOP HEADER */}
+        <Navbar
           metrics={metrics}
-          collapsed={sidebarCollapsed}
-          onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
+          lastUpdateTimestamp={lastUpdate}
         />
 
-        <main className="main-viewport">
-          {activeView === 'overview' && (
-            <OverviewView
+        {/* OFFLINE BANNER */}
+        {!isOnline && (
+          <div style={{
+            background: 'var(--surface-orange)',
+            borderBottom: '1px solid var(--surface-orange-border)',
+            color: 'var(--critical-red)',
+            padding: '8px 18px',
+            fontSize: '12px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            zIndex: 50
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <WifiOff size={15} />
+              <span style={{ fontWeight: 600 }}>Network Offline — Displaying cached level crossings & timetable data.</span>
+            </div>
+            <button 
+              onClick={() => railwayApi.initWebSocket()}
+              style={{
+                background: '#FFFFFF',
+                border: '1px solid var(--surface-orange-border)',
+                borderRadius: '6px',
+                color: 'var(--text-primary)',
+                padding: '4px 10px',
+                fontSize: '11px',
+                fontWeight: 600,
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '5px'
+              }}
+            >
+              <RefreshCw size={12} />
+              <span>Retry</span>
+            </button>
+          </div>
+        )}
+
+        {/* ROUTED PAGES */}
+        <div style={{ flex: 1, overflow: 'auto', display: 'flex', flexDirection: 'column', position: 'relative' }}>
+          {currentRoute === '/' && (
+            <HomeView
+              metrics={metrics}
               crossings={crossings}
               trains={trains}
               corridors={corridors}
-              selectedCrossing={selectedCrossing}
-              onSelectCrossing={setSelectedCrossing}
-              onOpenDrill={handleOpenDrill}
+              onNavigate={navigateTo}
+              onSelectCrossing={handleSelectCrossingAndOpenDetails}
             />
           )}
 
-          {activeView === 'map' && (
-            <div style={{ width: '100%', height: '100%', position: 'relative' }}>
-              <RailwayMap
-                crossings={crossings}
-                trains={trains}
-                corridors={corridors}
-                selectedCrossing={selectedCrossing}
-                onSelectCrossing={setSelectedCrossing}
-                height="100%"
-              />
-              {selectedCrossing && (
-                <CrossingDetailPanel
-                  crossing={selectedCrossing}
-                  corridors={corridors}
-                  trains={trains}
-                  onClose={() => setSelectedCrossing(null)}
-                  onOpenDrill={handleOpenDrill}
-                />
-              )}
-            </div>
+          {currentRoute === '/planner' && (
+            <JourneyPlannerView
+              crossings={crossings}
+              trains={trains}
+              corridors={corridors}
+              onSelectCrossing={handleSelectCrossingAndOpenDetails}
+              onNavigate={navigateTo}
+            />
           )}
 
-          {activeView === 'crossings' && (
+          {(currentRoute === '/crossings' || currentRoute === '/forecasts') && (
             <CrossingsView
               crossings={crossings}
               trains={trains}
               corridors={corridors}
-              onSelectCrossing={setSelectedCrossing}
-              onNavigateToMap={() => setActiveView('map')}
-              onOpenDrill={handleOpenDrill}
+              onSelectCrossing={handleSelectCrossingAndOpenDetails}
+              onNavigate={navigateTo}
+              initialFilter={currentRoute === '/forecasts' ? 'CLOSURE_EXPECTED' : undefined}
             />
           )}
 
-          {activeView === 'upcoming' && (
-            <UpcomingClosuresView
-              crossings={crossings}
-              trains={trains}
-              onSelectCrossing={setSelectedCrossing}
-              onNavigateToMap={() => setActiveView('map')}
-            />
-          )}
-
-          {activeView === 'trains' && (
+          {currentRoute === '/trains' && (
             <TrainMovementsView
               trains={trains}
               crossings={crossings}
-              onSelectCrossing={setSelectedCrossing}
-              onNavigateToMap={() => setActiveView('map')}
+              onSelectCrossing={handleSelectCrossingAndOpenDetails}
+              onNavigate={navigateTo}
             />
           )}
 
-          {activeView === 'analytics' && (
-            <AnalyticsView crossings={crossings} />
+          {currentRoute === '/saved-places' && (
+            <SavedPlacesView
+              onNavigate={navigateTo}
+            />
           )}
 
-          {activeView === 'health' && (
+          {currentRoute === '/notifications' && (
+            <NotificationsView
+              onNavigate={navigateTo}
+            />
+          )}
+
+          {currentRoute === '/data-health' && (
             <DataHealthView metrics={metrics} />
           )}
-        </main>
+
+          {currentRoute === '/settings' && (
+            <SettingsView
+              onNavigate={navigateTo}
+            />
+          )}
+
+          {currentRoute === '/analytics' && (
+            <AnalyticsView />
+          )}
+        </div>
+
+        {/* MOBILE ANDROID BOTTOM NAVIGATION BAR */}
+        <BottomNav
+          currentRoute={currentRoute}
+          onRouteChange={navigateTo}
+          metrics={metrics}
+        />
       </div>
 
-      {/* OPERATIONAL DRILL SIMULATOR MODAL */}
-      <DrillModal
-        isOpen={drillModalOpen}
-        onClose={() => setDrillModalOpen(false)}
-        crossings={crossings}
-        initialCrossing={drillInitialCrossing}
-      />
+      {/* CROSSING DETAIL OVERLAY PANEL */}
+      <AnimatePresence>
+        {selectedCrossing && (
+          <CrossingDetailPanel
+            crossing={selectedCrossing}
+            corridors={corridors}
+            trains={trains}
+            onClose={() => setSelectedCrossing(null)}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* CINEMATIC APPLICATION INTRODUCTION (INITIAL LAUNCH ONLY) */}
+      {showIntro && (
+        <CinematicIntro
+          onComplete={() => {
+            try {
+              sessionStorage.setItem('fatak_intro_seen', 'true');
+            } catch {}
+            setShowIntro(false);
+          }}
+        />
+      )}
     </div>
   );
 }

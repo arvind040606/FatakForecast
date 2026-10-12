@@ -1,0 +1,30 @@
+# Exclude mobile Android builds (65+ MB) from Vercel web deployment
+frontend/android
+frontend/android/**
+.gradle
+*.apk
+
+# Exclude local scratch & test scripts
+test_*.mjs
+scratch_*.mjs
+backend/scratch_*.js
+inspect_*.mjs
+audit_*.mjs
+assemble_corridors.mjs
+check_*.mjs
+copy_tracks.mjs
+correlate_crossings*.mjs
+extend_corridors.mjs
+fetch_*.mjs
+generate_authoritative_crossings.mjs
+group_crossings.mjs
+process_tracks.mjs
+update_audited_crossings.mjs
+
+# Raw OSM dumps (not needed at runtime)
+osm_*.json
+
+# Logs and system artifacts
+*.log
+.DS_Store
+Thumbs.db

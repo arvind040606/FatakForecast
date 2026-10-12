@@ -1,27 +1,28 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
-  GitFork, 
-  MapPin, 
-  Clock, 
-  CheckCircle2, 
-  AlertTriangle, 
-  ShieldAlert, 
   Search, 
-  Filter, 
-  SlidersHorizontal,
-  Train,
-  Copy,
-  Check
+  MapPin, 
+  Copy, 
+  Check, 
+  Clock, 
+  Train, 
+  Info, 
+  LayoutGrid, 
+  List,
+  ShieldAlert,
+  ArrowRight
 } from 'lucide-react';
-import { RailwayCrossing, SectorTrain, RailwayCorridor, ActiveView } from '../types';
+import { RailwayCrossing, SectorTrain, RailwayCorridor, ActiveRoute } from '../types';
+import { findImpactingTrainForCrossing, getCrossingTrainDisplay } from '../utils/trainHelpers';
+import { useSharedTimer, getAuthoritativeTargetEpoch, calculateRemainingSeconds, formatCountdown } from '../utils/timerManager';
 
 interface CrossingsViewProps {
   crossings: RailwayCrossing[];
   trains: SectorTrain[];
   corridors: RailwayCorridor[];
   onSelectCrossing: (crossing: RailwayCrossing) => void;
-  onNavigateToMap: () => void;
-  onOpenDrill: (crossing: RailwayCrossing) => void;
+  onNavigate: (route: ActiveRoute) => void;
+  initialFilter?: string;
 }
 
 export const CrossingsView: React.FC<CrossingsViewProps> = ({
@@ -29,248 +30,600 @@ export const CrossingsView: React.FC<CrossingsViewProps> = ({
   trains,
   corridors,
   onSelectCrossing,
-  onNavigateToMap,
-  onOpenDrill
+  onNavigate,
+  initialFilter
 }) => {
-  const [filterStatus, setFilterStatus] = useState<string>('ALL');
+  const [filterStatus, setFilterStatus] = useState<string>(initialFilter || 'ALL');
+  const [filterVerification, setFilterVerification] = useState<string>('ALL');
   const [searchQuery, setSearchQuery] = useState('');
+  const [sortBy, setSortBy] = useState<'closure' | 'name' | 'id'>('closure');
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<'cards' | 'table'>('cards');
+
+  // Local 1-second continuous ticker for ultra-smooth real-time countdown updates
+  const now = useSharedTimer();
+
+  const getDynamicWaitSec = (c: RailwayCrossing): number => {
+    const target = getAuthoritativeTargetEpoch(c, 'reopen', now);
+    if (target !== null) {
+      return calculateRemainingSeconds(target, now);
+    }
+    return c.remainingWaitSec || 0;
+  };
+
+  const getDynamicClosureSec = (c: RailwayCrossing): number => {
+    const target = getAuthoritativeTargetEpoch(c, 'closure', now);
+    if (target !== null) {
+      return calculateRemainingSeconds(target, now);
+    }
+    return c.timeToNextClosureSec || 0;
+  };
+
+
+  const closedCount = crossings.filter(c => c.status === 'CLOSURE_EXPECTED' || c.status === 'CLOSED' || c.status === 'CLOSURE_REPORTED').length;
+  const approachCount = crossings.filter(c => c.status === 'APPROACHING').length;
+  const openCount = crossings.filter(c => c.status === 'OPEN').length;
+  const unknownCount = crossings.filter(c => c.status === 'UNKNOWN').length;
 
   const filtered = crossings.filter(c => {
-    const matchStatus = filterStatus === 'ALL' || c.status === filterStatus;
+    const isClosed = c.status === 'CLOSURE_EXPECTED' || c.status === 'CLOSED' || c.status === 'CLOSURE_REPORTED';
+    const matchStatus = filterStatus === 'ALL' || 
+      (filterStatus === 'CLOSURE_EXPECTED' ? isClosed : c.status === filterStatus);
+    const matchVerification = filterVerification === 'ALL' || 
+      (filterVerification === 'VERIFIED' && c.verificationStatus === 'VERIFIED_MAPPED_CROSSING') ||
+      (filterVerification === 'PENDING' && c.verificationStatus === 'REQUIRES_FIELD_VERIFICATION');
+
     const matchSearch = c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                        c.officialCode.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                        c.punjabiName.includes(searchQuery);
-    return matchStatus && matchSearch;
+                        c.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                        (c.punjabiName && c.punjabiName.includes(searchQuery)) ||
+                        (c.roadClassification && c.roadClassification.toLowerCase().includes(searchQuery.toLowerCase()));
+    return matchStatus && matchVerification && matchSearch;
   });
 
-  const handleCopyCoords = (c: RailwayCrossing, e: React.MouseEvent) => {
+  const sorted = [...filtered].sort((a, b) => {
+    if (sortBy === 'name') return a.name.localeCompare(b.name);
+    if (sortBy === 'id') return a.id.localeCompare(b.id);
+    
+    // Sort by closure urgency
+    const aClosed = a.status === 'CLOSURE_EXPECTED' || a.status === 'CLOSED' || a.status === 'CLOSURE_REPORTED';
+    const bClosed = b.status === 'CLOSURE_EXPECTED' || b.status === 'CLOSED' || b.status === 'CLOSURE_REPORTED';
+    if (aClosed && !bClosed) return -1;
+    if (!aClosed && bClosed) return 1;
+
+    const aApp = a.status === 'APPROACHING';
+    const bApp = b.status === 'APPROACHING';
+    if (aApp && !bApp) return -1;
+    if (!aApp && bApp) return 1;
+
+    const aHasCountdown = a.countdownAvailable && a.timeToNextClosureSec > 0;
+    const bHasCountdown = b.countdownAvailable && b.timeToNextClosureSec > 0;
+    if (aHasCountdown && !bHasCountdown) return -1;
+    if (!aHasCountdown && bHasCountdown) return 1;
+    if (aHasCountdown && bHasCountdown) {
+      return a.timeToNextClosureSec - b.timeToNextClosureSec;
+    }
+
+    const aOpen = a.status === 'OPEN';
+    const bOpen = b.status === 'OPEN';
+    if (aOpen && !bOpen) return -1;
+    if (!aOpen && bOpen) return 1;
+
+    return 0;
+  });
+
+  const handleCopy = (c: RailwayCrossing, e: React.MouseEvent) => {
     e.stopPropagation();
     navigator.clipboard.writeText(`${c.lat}, ${c.lng}`);
     setCopiedId(c.id);
     setTimeout(() => setCopiedId(null), 2000);
   };
 
+  const getStatusBadge = (crossing: RailwayCrossing) => {
+    if (crossing.status === 'CLOSURE_EXPECTED' || crossing.status === 'CLOSED' || crossing.status === 'CLOSURE_REPORTED') {
+      return { label: 'CLOSURE EXPECTED', color: 'var(--critical-red)', bg: 'var(--status-closed-bg)', border: 'var(--status-closed-border)' };
+    }
+    if (crossing.status === 'APPROACHING') {
+      return { label: 'TRAIN APPROACHING', color: 'var(--warning-amber)', bg: 'var(--status-approaching-bg)', border: 'var(--status-approaching-border)' };
+    }
+    if (crossing.status === 'UNKNOWN') {
+      return { label: 'OPEN PASSAGE', color: 'var(--status-open)', bg: 'var(--surface-green)', border: 'var(--surface-green-border)' };
+    }
+    return { label: 'OPEN PASSAGE', color: 'var(--status-open)', bg: 'var(--surface-green)', border: 'var(--surface-green-border)' };
+  };
+
   return (
-    <div style={{ padding: '24px 30px', maxWidth: '1400px', margin: '0 auto', width: '100%' }}>
-      {/* HEADER & FILTER BAR */}
-      <div style={{
-        display: 'flex',
-        flexWrap: 'wrap',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        gap: '16px',
-        marginBottom: '24px'
-      }}>
+    <div className="page-container" style={{ paddingBottom: '90px' }}>
+      {/* PAGE HEADER */}
+      <div className="page-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '14px' }}>
         <div>
-          <h1 style={{ fontSize: '20px', fontWeight: 800, color: 'var(--text-white)' }}>
-            Amritsar Level Crossings Directory
-          </h1>
-          <p style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-            Exclusively mapped official railway crossings in Amritsar, Punjab • Northern Railway (NR) Firozpur Division
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+            <h1 className="page-title" style={{ margin: 0 }}>Amritsar Railway Crossings Directory</h1>
+            <span style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '5px',
+              fontSize: '11px',
+              fontFamily: 'var(--font-mono)',
+              fontWeight: 700,
+              color: 'var(--accent-primary)',
+              backgroundColor: 'var(--surface-green)',
+              border: '1px solid var(--surface-green-border)',
+              padding: '2px 8px',
+              borderRadius: 'var(--radius-full)'
+            }}>
+              <span style={{
+                width: '6px',
+                height: '6px',
+                borderRadius: '50%',
+                backgroundColor: 'var(--status-open)',
+                boxShadow: '0 0 6px var(--status-open)'
+              }} />
+              LIVE TELEMETRY (≤3s SYNC)
+            </span>
+          </div>
+          <p className="page-subtitle" style={{ marginTop: '4px' }}>
+            Authoritative inventory of all {crossings.length} level crossings mapped along Amritsar railway corridors
           </p>
         </div>
 
-        {/* SEARCH & FILTERS */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+        {/* SEARCH, STATUS FILTER & CONTROLS */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+          {/* SEARCH */}
           <div style={{
             display: 'flex',
             alignItems: 'center',
-            background: 'var(--bg-surface)',
-            border: '1px solid var(--bg-panel-border)',
-            borderRadius: '6px',
-            padding: '6px 12px',
-            gap: '8px'
+            backgroundColor: '#FFFFFF',
+            border: '1px solid var(--border-soft)',
+            borderRadius: 'var(--radius-md)',
+            padding: '7px 12px',
+            gap: '8px',
+            boxShadow: 'var(--shadow-sm)'
           }}>
-            <Search size={14} color="var(--text-muted)" />
+            <Search size={15} color="var(--text-muted)" />
             <input
               type="text"
-              placeholder="Search by name or LC code..."
+              placeholder="Search crossings..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               style={{
                 background: 'transparent',
                 border: 'none',
                 outline: 'none',
-                color: 'var(--text-white)',
-                fontSize: '12px',
-                width: '180px'
+                color: 'var(--text-primary)',
+                fontSize: '12.5px',
+                width: '150px'
               }}
             />
           </div>
 
-          <div style={{ display: 'flex', background: 'var(--bg-surface)', borderRadius: '6px', padding: '3px', border: '1px solid var(--bg-panel-border)' }}>
-            {['ALL', 'OPEN', 'APPROACHING', 'CLOSED'].map(status => (
+          {/* STATUS FILTER PILLS */}
+          <div style={{
+            display: 'flex',
+            backgroundColor: '#FFFFFF',
+            border: '1px solid var(--border-soft)',
+            borderRadius: 'var(--radius-md)',
+            padding: '3px',
+            boxShadow: 'var(--shadow-sm)'
+          }}>
+            {[
+              { id: 'ALL', label: `All (${crossings.length})` },
+              { id: 'CLOSURE_EXPECTED', label: `Closed (${closedCount})`, isAlert: closedCount > 0 },
+              { id: 'APPROACHING', label: `Approach (${approachCount})` },
+              { id: 'OPEN', label: `Open (${openCount})` },
+              ...(unknownCount > 0 ? [{ id: 'UNKNOWN', label: `Unconfirmed (${unknownCount})` }] : [])
+            ].map(item => (
               <button
-                key={status}
-                onClick={() => setFilterStatus(status)}
+                key={item.id}
+                onClick={() => setFilterStatus(item.id)}
                 style={{
-                  padding: '5px 12px',
-                  borderRadius: '4px',
-                  border: 'none',
-                  fontSize: '11px',
+                  backgroundColor: filterStatus === item.id 
+                    ? (item.id === 'CLOSURE_EXPECTED' ? 'var(--status-closed-bg)' : 'var(--surface-green)') 
+                    : 'transparent',
+                  color: filterStatus === item.id 
+                    ? (item.id === 'CLOSURE_EXPECTED' ? 'var(--status-closed)' : 'var(--accent-emphasis)') 
+                    : (item.isAlert ? 'var(--status-closed)' : 'var(--text-secondary)'),
+                  border: filterStatus === item.id 
+                    ? (item.id === 'CLOSURE_EXPECTED' ? '1px solid var(--status-closed-border)' : '1px solid var(--surface-green-border)') 
+                    : '1px solid transparent',
+                  padding: '6px 12px',
+                  borderRadius: 'var(--radius-sm)',
+                  fontSize: '11.5px',
                   fontWeight: 600,
                   cursor: 'pointer',
-                  background: filterStatus === status ? 'var(--accent-blue-deep)' : 'transparent',
-                  color: filterStatus === status ? '#ffffff' : 'var(--text-muted)',
-                  transition: 'all 0.15s ease'
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '4px'
                 }}
               >
-                {status}
+                {item.label}
               </button>
             ))}
+          </div>
+
+          {/* SORT DROPDOWN */}
+          <select
+            value={sortBy}
+            onChange={(e) => setSortBy(e.target.value as any)}
+            style={{
+              backgroundColor: '#FFFFFF',
+              border: '1px solid var(--border-soft)',
+              color: 'var(--text-primary)',
+              padding: '7px 12px',
+              borderRadius: 'var(--radius-md)',
+              fontSize: '12px',
+              fontWeight: 500,
+              outline: 'none',
+              boxShadow: 'var(--shadow-sm)'
+            }}
+          >
+            <option value="closure">Sort: Next Closure</option>
+            <option value="name">Sort: Name (A-Z)</option>
+            <option value="id">Sort: Node ID</option>
+          </select>
+
+          {/* VIEW MODE TOGGLE */}
+          <div className="hide-on-mobile" style={{
+            display: 'flex',
+            backgroundColor: '#FFFFFF',
+            border: '1px solid var(--border-soft)',
+            borderRadius: 'var(--radius-md)',
+            padding: '3px',
+            boxShadow: 'var(--shadow-sm)'
+          }}>
+            <button
+              onClick={() => setViewMode('cards')}
+              title="Cards View"
+              style={{
+                backgroundColor: viewMode === 'cards' ? 'var(--surface-green)' : 'transparent',
+                color: viewMode === 'cards' ? 'var(--accent-emphasis)' : 'var(--text-muted)',
+                border: viewMode === 'cards' ? '1px solid var(--surface-green-border)' : '1px solid transparent',
+                padding: '6px 10px',
+                borderRadius: 'var(--radius-sm)',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '5px'
+              }}
+            >
+              <LayoutGrid size={14} />
+              <span style={{ fontSize: '11.5px', fontWeight: 600 }}>Cards</span>
+            </button>
+            <button
+              onClick={() => setViewMode('table')}
+              title="Table View"
+              style={{
+                backgroundColor: viewMode === 'table' ? 'var(--surface-green)' : 'transparent',
+                color: viewMode === 'table' ? 'var(--accent-emphasis)' : 'var(--text-muted)',
+                border: viewMode === 'table' ? '1px solid var(--surface-green-border)' : '1px solid transparent',
+                padding: '6px 10px',
+                borderRadius: 'var(--radius-sm)',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '5px'
+              }}
+            >
+              <List size={14} />
+              <span style={{ fontSize: '11.5px', fontWeight: 600 }}>Table</span>
+            </button>
           </div>
         </div>
       </div>
 
-      {/* CROSSINGS CARDS GRID */}
-      <div style={{
-        display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
-        gap: '20px'
+      {/* GATE TELEMETRY TRANSPARENCY ADVISORY */}
+      <div className="panel" style={{
+        padding: '12px 18px',
+        marginBottom: '20px',
+        backgroundColor: '#FFFFFF',
+        display: 'flex',
+        alignItems: 'flex-start',
+        gap: '12px'
       }}>
-        {filtered.map(crossing => {
-          const corridor = corridors.find(c => c.id === crossing.corridorId);
-          const upcomingTrain = trains.find(t => t.number === crossing.upcomingTrainId);
-          const isClosed = crossing.status === 'CLOSED';
-          const isApproaching = crossing.status === 'APPROACHING';
+        <Info size={17} color="var(--accent-primary)" style={{ flexShrink: 0, marginTop: '2px' }} />
+        <div style={{ fontSize: '12px', color: 'var(--text-secondary)', lineHeight: '1.5' }}>
+          <strong style={{ color: 'var(--accent-emphasis)' }}>Barrier Telemetry Notice:</strong>{' '}
+          Level crossing closure projections are calculated from approaching train kinematics along track geometry. Physical gate barrier sensor telemetry is uninstrumented; states reflect predictive kinematic forecasts, not mechanical latch confirmations.
+        </div>
+      </div>
 
-          return (
-            <div
-              key={crossing.id}
-              className="card-surface"
-              style={{
-                padding: '18px',
-                display: 'flex',
-                flexDirection: 'column',
-                justifyContent: 'space-between',
-                gap: '14px',
-                borderColor: isClosed ? 'var(--status-closed-border)' : isApproaching ? 'var(--status-approaching-border)' : 'var(--bg-panel-border)'
-              }}
-            >
-              <div>
-                {/* TOP HEADER */}
-                <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '8px' }}>
+      {/* CARDS VIEW (DEFAULT ACROSS ALL SCREENS) */}
+      {viewMode === 'cards' && (
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fill, minmax(min(320px, 100%), 1fr))',
+          gap: '16px',
+          marginBottom: '24px'
+        }}>
+          {sorted.map(crossing => {
+            const badge = getStatusBadge(crossing);
+            const trainInfo = getCrossingTrainDisplay(crossing, trains);
+
+            return (
+              <div
+                key={crossing.id}
+                className="mobile-card"
+                onClick={() => onSelectCrossing(crossing)}
+                style={{
+                  backgroundColor: '#FFFFFF',
+                  border: '1px solid var(--border-soft)',
+                  borderLeft: `4px solid ${badge.color}`,
+                  padding: '18px',
+                  borderRadius: 'var(--radius-lg)',
+                  boxShadow: 'var(--shadow-sm)',
+                  cursor: 'pointer'
+                }}
+              >
+                {/* CARD HEADER */}
+                <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '8px' }}>
                   <div>
-                    <h3 style={{ fontSize: '16px', fontWeight: 700, color: 'var(--text-white)' }}>
+                    <div style={{ fontFamily: 'var(--font-brand)', fontWeight: 700, fontSize: '16px', color: 'var(--text-primary)' }}>
                       {crossing.name}
-                    </h3>
-                    <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-                      {crossing.punjabiName} • <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--accent-cyan)' }}>{crossing.officialCode}</span>
+                    </div>
+                    <div style={{ fontSize: '11.5px', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                      <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--accent-primary)', fontWeight: 600 }}>{crossing.id}</span>
+                      {crossing.punjabiName && ` • ${crossing.punjabiName}`}
                     </div>
                   </div>
-                  <span className={`status-badge ${crossing.status.toLowerCase()}`}>
-                    {crossing.status}
+
+                  <span style={{
+                    fontSize: '10.5px',
+                    fontWeight: 700,
+                    backgroundColor: badge.bg,
+                    color: badge.color,
+                    border: `1px solid ${badge.border}`,
+                    padding: '2px 8px',
+                    borderRadius: 'var(--radius-full)'
+                  }}>
+                    {badge.label}
                   </span>
                 </div>
 
-                <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '14px' }}>
-                  {crossing.line}
-                </div>
-
-                {/* TELEMETRY SPECS */}
-                <div style={{
-                  backgroundColor: 'rgba(7, 11, 20, 0.5)',
-                  borderRadius: '6px',
-                  padding: '10px 12px',
-                  marginBottom: '12px'
-                }}>
-                  <div className="telemetry-row">
-                    <span className="telemetry-label">Coordinates:</span>
-                    <button
-                      onClick={(e) => handleCopyCoords(crossing, e)}
-                      style={{
-                        background: 'transparent',
-                        border: 'none',
-                        color: 'var(--accent-cyan)',
-                        cursor: 'pointer',
-                        display: 'flex',
+                {/* DETAILS ROW */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '10px', fontSize: '11.5px', margin: '6px 0' }}>
+                  <div style={{ backgroundColor: '#FAF9F5', padding: '9px 12px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-subtle)' }}>
+                    <div style={{ color: 'var(--text-muted)', fontSize: '10px', textTransform: 'uppercase', fontWeight: 600 }}>
+                      {trainInfo.label}
+                    </div>
+                    <div style={{ fontWeight: 700, color: 'var(--text-primary)', marginTop: '2px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {trainInfo.name}
+                    </div>
+                    <div style={{ fontSize: '10.5px', color: trainInfo.isApproaching ? 'var(--accent-primary)' : 'var(--text-secondary)', fontFamily: 'var(--font-mono)', fontWeight: 600, marginTop: '1px' }}>
+                      {trainInfo.trainNumber ? `#${trainInfo.trainNumber} • ` : ''}{trainInfo.speedText}
+                    </div>
+                    {trainInfo.secondaryTrains && trainInfo.secondaryTrains.length > 0 && (
+                      <div style={{
+                        marginTop: '4px',
+                        display: 'inline-flex',
                         alignItems: 'center',
                         gap: '4px',
-                        fontSize: '11px',
-                        fontFamily: 'var(--font-mono)'
-                      }}
-                    >
-                      <span>{crossing.lat}, {crossing.lng}</span>
-                      {copiedId === crossing.id ? <Check size={11} color="var(--status-open)" /> : <Copy size={11} />}
-                    </button>
+                        fontSize: '9.5px',
+                        fontWeight: 700,
+                        backgroundColor: '#FEF3C7',
+                        color: '#92400E',
+                        padding: '1px 5px',
+                        borderRadius: '3px',
+                        border: '1px solid #FCD34D'
+                      }}>
+                        <span>+{trainInfo.secondaryTrains.length} following:</span>
+                        <span>#{trainInfo.secondaryTrains.map(t => t.trainNumber).join(', #')}</span>
+                      </div>
+                    )}
                   </div>
 
-                  <div className="telemetry-row">
-                    <span className="telemetry-label">Telemetry Source:</span>
-                    <span className="telemetry-value" style={{ color: 'var(--text-primary)' }}>
-                      {crossing.verifiedSource}
-                    </span>
-                  </div>
+                  <div style={{ backgroundColor: '#FAF9F5', padding: '9px 12px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-subtle)' }}>
+                    <div style={{ color: 'var(--text-muted)', fontSize: '10px', textTransform: 'uppercase', fontWeight: 600 }}>Predicted Gate Status</div>
+                    <div style={{ fontWeight: 700, fontFamily: 'var(--font-mono)', color: badge.color, marginTop: '2px' }}>
+                      {(() => {
+                        const isClosed = crossing.status === 'CLOSED' || crossing.status === 'CLOSURE_REPORTED';
+                        const isClosureExpected = crossing.status === 'CLOSURE_EXPECTED';
+                        const waitSec = getDynamicWaitSec(crossing);
+                        const closeSec = getDynamicClosureSec(crossing);
 
-                  <div className="telemetry-row">
-                    <span className="telemetry-label">Line Speed Limit:</span>
-                    <span className="telemetry-value">
-                      {corridor?.speedLimitKmH || 110} km/h
-                    </span>
-                  </div>
+                        const { minutes: closeMin, seconds: closeRem } = formatCountdown(closeSec);
+                        const { minutes: waitMin, seconds: waitRem } = formatCountdown(waitSec);
 
-                  <div className="telemetry-row">
-                    <span className="telemetry-label">Next Train Dwell:</span>
-                    <span className="telemetry-value" style={{
-                      color: isClosed ? 'var(--status-closed)' : isApproaching ? 'var(--status-approaching)' : 'var(--status-open)'
-                    }}>
-                      {isClosed ? 'Gates Locked (~3m left)' : `Closure in ~${Math.round(crossing.timeToNextClosureSec / 60)}m`}
-                    </span>
+                        if (isClosed) {
+                          return waitSec > 0
+                            ? `CLOSED (~${waitMin}m ${waitRem}s wait)`
+                            : 'CLOSED (Traversing)';
+                        }
+                        if (isClosureExpected) {
+                          if (waitSec > 0 && closeSec <= 0) {
+                            return `CLOSED (~${waitMin}m ${waitRem}s wait)`;
+                          }
+                          if (closeSec > 0) {
+                            return `CLOSES IN ~${closeMin}m ${closeRem}s`;
+                          }
+                          return 'CLOSURE EXPECTED';
+                        }
+                        if (crossing.countdownAvailable && closeSec > 0 && closeSec < 3600) {
+                          return `~${closeMin}m ${closeRem}s`;
+                        }
+                        return 'Open Passage';
+                      })()}
+                    </div>
+                    <div style={{ fontSize: '10.5px', color: 'var(--text-secondary)', marginTop: '1px' }}>
+                      {crossing.locality || 'Amritsar Roadway'}
+                    </div>
                   </div>
                 </div>
 
-                {/* TRAIN INFO */}
-                {upcomingTrain && (
-                  <div style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '10px',
-                    padding: '8px 10px',
-                    backgroundColor: 'rgba(56, 189, 248, 0.05)',
-                    border: '1px solid rgba(56, 189, 248, 0.15)',
-                    borderRadius: '6px'
-                  }}>
-                    <Train size={16} color="var(--accent-cyan)" />
-                    <div>
-                      <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-white)' }}>
-                        {upcomingTrain.name} (#{upcomingTrain.number})
-                      </div>
-                      <div style={{ fontSize: '10px', color: 'var(--text-muted)' }}>
-                        {upcomingTrain.speedKmH} km/h • {upcomingTrain.distanceToNextCrossingKm.toFixed(1)} km away
-                      </div>
-                    </div>
-                  </div>
-                )}
+                {/* CARD ACTIONS */}
+                <div style={{ display: 'flex', gap: '8px', marginTop: '6px' }} onClick={(e) => e.stopPropagation()}>
+                  <button
+                    onClick={() => onSelectCrossing(crossing)}
+                    className="btn btn-primary"
+                    style={{ width: '100%', minHeight: '42px', fontSize: '12.5px', fontWeight: 700, justifyContent: 'center' }}
+                  >
+                    <span>Inspect Gate Details</span>
+                    <ArrowRight size={14} />
+                  </button>
+                </div>
               </div>
+            );
+          })}
+        </div>
+      )}
 
-              {/* ACTION BUTTONS */}
-              <div style={{ display: 'flex', gap: '8px', marginTop: '10px' }}>
-                <button
-                  onClick={() => {
-                    onSelectCrossing(crossing);
-                    onNavigateToMap();
-                  }}
-                  className="btn-primary"
-                  style={{ flex: 1, justifyContent: 'center', padding: '8px' }}
-                >
-                  <MapPin size={14} />
-                  <span>View On Map</span>
-                </button>
+      {/* TABLE VIEW (OPTION FOR DESKTOP) */}
+      {viewMode === 'table' && (
+        <div className="panel" style={{ overflow: 'hidden', marginBottom: '24px' }}>
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Crossing Identifier &amp; Name</th>
+                <th>Predicted Status</th>
+                <th>Approaching Train</th>
+                <th>Corridor Location</th>
+                <th>Estimated Closure</th>
+                <th>Coordinates</th>
+                <th style={{ textAlign: 'right' }}>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sorted.map(crossing => {
+                const badge = getStatusBadge(crossing);
+                const trainInfo = getCrossingTrainDisplay(crossing, trains);
 
-                <button
-                  onClick={() => onOpenDrill(crossing)}
-                  className="btn-secondary"
-                  style={{ padding: '8px 12px' }}
-                  title="Simulate Operational Action"
-                >
-                  <SlidersHorizontal size={14} />
-                </button>
-              </div>
-            </div>
-          );
-        })}
-      </div>
+                return (
+                  <tr key={crossing.id} onClick={() => onSelectCrossing(crossing)} style={{ cursor: 'pointer' }}>
+                    <td>
+                      <div>
+                        <div style={{ fontWeight: 700, color: 'var(--text-primary)', fontSize: '13.5px' }}>
+                          {crossing.name}
+                        </div>
+                        <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
+                          <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--accent-primary)', fontWeight: 600 }}>{crossing.id}</span>
+                          {crossing.punjabiName && ` • ${crossing.punjabiName}`}
+                        </div>
+                      </div>
+                    </td>
+
+                    <td>
+                      <span style={{
+                        fontSize: '10.5px',
+                        fontWeight: 700,
+                        backgroundColor: badge.bg,
+                        color: badge.color,
+                        border: `1px solid ${badge.border}`,
+                        padding: '2px 8px',
+                        borderRadius: 'var(--radius-full)'
+                      }}>
+                        {badge.label}
+                      </span>
+                    </td>
+
+                    <td>
+                      <div>
+                        <div style={{ color: 'var(--text-primary)', fontSize: '12.5px', fontWeight: 600 }}>
+                          {trainInfo.name}
+                        </div>
+                        <div style={{ fontSize: '10.5px', fontFamily: 'var(--font-mono)', color: trainInfo.isApproaching ? 'var(--accent-primary)' : 'var(--text-secondary)', fontWeight: 600 }}>
+                          {trainInfo.trainNumber ? `#${trainInfo.trainNumber} • ` : ''}{trainInfo.speedText}
+                        </div>
+                        {trainInfo.secondaryTrains && trainInfo.secondaryTrains.length > 0 && (
+                          <div style={{
+                            marginTop: '2px',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '4px',
+                            fontSize: '9px',
+                            fontWeight: 700,
+                            backgroundColor: '#FEF3C7',
+                            color: '#92400E',
+                            padding: '1px 4px',
+                            borderRadius: '3px'
+                          }}>
+                            +{trainInfo.secondaryTrains.length} following (#{trainInfo.secondaryTrains.map(t => t.trainNumber).join(', #')})
+                          </div>
+                        )}
+                      </div>
+                    </td>
+
+                    <td>
+                      <div style={{ fontSize: '12.5px', color: 'var(--text-primary)' }}>
+                        {crossing.locality || 'Amritsar Roadway'}
+                      </div>
+                    </td>
+
+                    <td>
+                      <div style={{
+                        fontFamily: 'var(--font-mono)',
+                        fontWeight: 700,
+                        fontSize: '12.5px',
+                        color: badge.color
+                      }}>
+                        {(() => {
+                          const isClosed = crossing.status === 'CLOSED' || crossing.status === 'CLOSURE_REPORTED';
+                          const isClosureExpected = crossing.status === 'CLOSURE_EXPECTED';
+                          const waitSec = getDynamicWaitSec(crossing);
+                          const closeSec = getDynamicClosureSec(crossing);
+
+                          const { minutes: closeMin, seconds: closeRem } = formatCountdown(closeSec);
+                          const { minutes: waitMin, seconds: waitRem } = formatCountdown(waitSec);
+
+                          if (crossing.status === 'UNKNOWN') return 'Status Unconfirmed';
+                          if (isClosed) {
+                            return waitSec > 0
+                              ? `CLOSED (~${waitMin}m ${waitRem}s wait)`
+                              : 'CLOSED (Traversing)';
+                          }
+                          if (isClosureExpected) {
+                            if (waitSec > 0 && closeSec <= 0) {
+                              return `CLOSED (~${waitMin}m ${waitRem}s wait)`;
+                            }
+                            if (closeSec > 0) {
+                              return `CLOSES IN ~${closeMin}m ${closeRem}s`;
+                            }
+                            return 'CLOSURE EXPECTED';
+                          }
+                          if (crossing.countdownAvailable && closeSec > 0 && closeSec < 3600) {
+                            return `~${closeMin}m ${closeRem}s`;
+                          }
+                          return 'Clear Passage';
+                        })()}
+                      </div>
+                    </td>
+
+                    <td>
+                      <button
+                        onClick={(e) => handleCopy(crossing, e)}
+                        style={{
+                          background: '#FAF9F5',
+                          border: '1px solid var(--border-subtle)',
+                          borderRadius: '4px',
+                          color: 'var(--text-secondary)',
+                          padding: '3px 7px',
+                          fontSize: '10.5px',
+                          fontFamily: 'var(--font-mono)',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '4px'
+                        }}
+                        title="Copy coordinates"
+                      >
+                        {copiedId === crossing.id ? <Check size={11} color="var(--status-open)" /> : <Copy size={11} />}
+                        <span>{crossing.lat.toFixed(4)}, {crossing.lng.toFixed(4)}</span>
+                      </button>
+                    </td>
+
+                    <td style={{ textAlign: 'right' }} onClick={(e) => e.stopPropagation()}>
+                      <button
+                        onClick={() => onSelectCrossing(crossing)}
+                        className="btn btn-primary"
+                        style={{ padding: '6px 12px', fontSize: '12px', minHeight: '34px' }}
+                      >
+                        Inspect
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 };

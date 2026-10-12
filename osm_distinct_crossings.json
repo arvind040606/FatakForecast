@@ -1,0 +1,842 @@
+[
+  {
+    "index": 1,
+    "id": "osm/node/331024406",
+    "allNodes": [
+      "osm/node/331024406"
+    ],
+    "name": "tertiary Level Crossing",
+    "explicitName": null,
+    "lat": 31.607603,
+    "lon": 74.8680364,
+    "roadNames": [
+      "tertiary"
+    ],
+    "railCorridors": [
+      "main"
+    ],
+    "barrier": "unknown",
+    "supervised": "unknown",
+    "osmTags": {
+      "railway": "level_crossing"
+    }
+  },
+  {
+    "index": 2,
+    "id": "osm/node/567992474",
+    "allNodes": [
+      "osm/node/567992474"
+    ],
+    "name": "tertiary Level Crossing",
+    "explicitName": null,
+    "lat": 31.5820186,
+    "lon": 74.8872375,
+    "roadNames": [
+      "tertiary"
+    ],
+    "railCorridors": [
+      "main"
+    ],
+    "barrier": "unknown",
+    "supervised": "unknown",
+    "osmTags": {
+      "railway": "level_crossing"
+    }
+  },
+  {
+    "index": 3,
+    "id": "osm/node/568013319",
+    "allNodes": [
+      "osm/node/568013319"
+    ],
+    "name": "tertiary Level Crossing",
+    "explicitName": null,
+    "lat": 31.6098751,
+    "lon": 74.8604901,
+    "roadNames": [
+      "tertiary"
+    ],
+    "railCorridors": [
+      "main"
+    ],
+    "barrier": "unknown",
+    "supervised": "unknown",
+    "osmTags": {
+      "railway": "level_crossing"
+    }
+  },
+  {
+    "index": 4,
+    "id": "osm/node/568013331",
+    "allNodes": [
+      "osm/node/568013331"
+    ],
+    "name": "State Highway 21 Level Crossing",
+    "explicitName": null,
+    "lat": 31.614367,
+    "lon": 74.8542872,
+    "roadNames": [
+      "State Highway 21"
+    ],
+    "railCorridors": [
+      "main"
+    ],
+    "barrier": "unknown",
+    "supervised": "unknown",
+    "osmTags": {
+      "railway": "level_crossing"
+    }
+  },
+  {
+    "index": 5,
+    "id": "osm/node/568021277",
+    "allNodes": [
+      "osm/node/568021277"
+    ],
+    "name": "tertiary Level Crossing",
+    "explicitName": null,
+    "lat": 31.6197236,
+    "lon": 74.8515595,
+    "roadNames": [
+      "tertiary"
+    ],
+    "railCorridors": [
+      "main"
+    ],
+    "barrier": "unknown",
+    "supervised": "unknown",
+    "osmTags": {
+      "railway": "level_crossing"
+    }
+  },
+  {
+    "index": 6,
+    "id": "osm/node/1006139587",
+    "allNodes": [
+      "osm/node/1006139587",
+      "osm/node/2552337703",
+      "osm/node/2552337715"
+    ],
+    "name": "residential Level Crossing",
+    "explicitName": null,
+    "lat": 31.6344127,
+    "lon": 74.8786031,
+    "roadNames": [
+      "residential"
+    ],
+    "railCorridors": [
+      "JDL-ASR UP MAIN",
+      "ASR-JDL DOWN MAIN",
+      "main"
+    ],
+    "barrier": "unknown",
+    "supervised": "unknown",
+    "osmTags": {
+      "railway": "level_crossing"
+    }
+  },
+  {
+    "index": 7,
+    "id": "osm/node/1006209216",
+    "allNodes": [
+      "osm/node/1006209216",
+      "osm/node/2552337642",
+      "osm/node/2552337650"
+    ],
+    "name": "tertiary Level Crossing",
+    "explicitName": null,
+    "lat": 31.6340713,
+    "lon": 74.8843422,
+    "roadNames": [
+      "tertiary"
+    ],
+    "railCorridors": [
+      "JDL-ASR UP MAIN",
+      "ASR-JDL DOWN MAIN",
+      "main"
+    ],
+    "barrier": "unknown",
+    "supervised": "unknown",
+    "osmTags": {
+      "railway": "level_crossing"
+    }
+  },
+  {
+    "index": 8,
+    "id": "osm/node/1006212111",
+    "allNodes": [
+      "osm/node/1006212111",
+      "osm/node/2552337544"
+    ],
+    "name": "Jaura Phatak",
+    "explicitName": "Jaura Phatak",
+    "lat": 31.6313045,
+    "lon": 74.8975139,
+    "roadNames": [
+      "tertiary"
+    ],
+    "railCorridors": [
+      "main",
+      "ASR-JDL DOWN MAIN"
+    ],
+    "barrier": "unknown",
+    "supervised": "unknown",
+    "osmTags": {
+      "name": "Jaura Phatak",
+      "railway": "level_crossing"
+    }
+  },
+  {
+    "index": 9,
+    "id": "osm/node/1006212137",
+    "allNodes": [
+      "osm/node/1006212137"
+    ],
+    "name": "Jaura Phatak",
+    "explicitName": "Jaura Phatak",
+    "lat": 31.630882,
+    "lon": 74.8972524,
+    "roadNames": [
+      "tertiary"
+    ],
+    "railCorridors": [
+      "JDL-ASR UP MAIN"
+    ],
+    "barrier": "unknown",
+    "supervised": "unknown",
+    "osmTags": {
+      "name": "Jaura Phatak",
+      "railway": "level_crossing"
+    }
+  },
+  {
+    "index": 10,
+    "id": "osm/node/1008050922",
+    "allNodes": [
+      "osm/node/1008050922",
+      "osm/node/6478072278"
+    ],
+    "name": "tertiary Level Crossing",
+    "explicitName": null,
+    "lat": 31.6301318,
+    "lon": 74.8475665,
+    "roadNames": [
+      "tertiary"
+    ],
+    "railCorridors": [
+      "main"
+    ],
+    "barrier": "unknown",
+    "supervised": "unknown",
+    "osmTags": {
+      "railway": "level_crossing"
+    }
+  },
+  {
+    "index": 11,
+    "id": "osm/node/1008055097",
+    "allNodes": [
+      "osm/node/1008055097"
+    ],
+    "name": "tertiary Level Crossing",
+    "explicitName": null,
+    "lat": 31.6297586,
+    "lon": 74.8512713,
+    "roadNames": [
+      "tertiary"
+    ],
+    "railCorridors": [
+      "main"
+    ],
+    "barrier": "unknown",
+    "supervised": "unknown",
+    "osmTags": {
+      "railway": "level_crossing"
+    }
+  },
+  {
+    "index": 12,
+    "id": "osm/node/1008058509",
+    "allNodes": [
+      "osm/node/1008058509",
+      "osm/node/6478072196"
+    ],
+    "name": "secondary Level Crossing",
+    "explicitName": null,
+    "lat": 31.6293126,
+    "lon": 74.8423204,
+    "roadNames": [
+      "secondary"
+    ],
+    "railCorridors": [
+      "main"
+    ],
+    "barrier": "unknown",
+    "supervised": "unknown",
+    "osmTags": {
+      "railway": "level_crossing"
+    }
+  },
+  {
+    "index": 13,
+    "id": "osm/node/1009400208",
+    "allNodes": [
+      "osm/node/1009400208",
+      "osm/node/10245922178"
+    ],
+    "name": "unclassified Level Crossing",
+    "explicitName": null,
+    "lat": 31.6275124,
+    "lon": 74.8300862,
+    "roadNames": [
+      "unclassified"
+    ],
+    "railCorridors": [
+      "main"
+    ],
+    "barrier": "unknown",
+    "supervised": "unknown",
+    "osmTags": {
+      "railway": "level_crossing"
+    }
+  },
+  {
+    "index": 14,
+    "id": "osm/node/1326294756",
+    "allNodes": [
+      "osm/node/1326294756"
+    ],
+    "name": "RAILWAY LINE PATHANKOT",
+    "explicitName": "RAILWAY LINE PATHANKOT",
+    "lat": 31.6609067,
+    "lon": 74.9278386,
+    "roadNames": [
+      "Old Batala Road"
+    ],
+    "railCorridors": [
+      "main"
+    ],
+    "barrier": "unknown",
+    "supervised": "unknown",
+    "osmTags": {
+      "name": "RAILWAY LINE PATHANKOT",
+      "railway": "level_crossing"
+    }
+  },
+  {
+    "index": 15,
+    "id": "osm/node/2552363193",
+    "allNodes": [
+      "osm/node/2552363193",
+      "osm/node/2552363195"
+    ],
+    "name": "unclassified Level Crossing",
+    "explicitName": null,
+    "lat": 31.6702149,
+    "lon": 74.9354484,
+    "roadNames": [
+      "unclassified"
+    ],
+    "railCorridors": [
+      "branch",
+      "main"
+    ],
+    "barrier": "unknown",
+    "supervised": "unknown",
+    "osmTags": {
+      "railway": "level_crossing",
+      "source": "bing"
+    }
+  },
+  {
+    "index": 16,
+    "id": "osm/node/3010887698",
+    "allNodes": [
+      "osm/node/3010887698"
+    ],
+    "name": "tertiary Level Crossing",
+    "explicitName": null,
+    "lat": 31.6024736,
+    "lon": 74.8762004,
+    "roadNames": [
+      "tertiary"
+    ],
+    "railCorridors": [
+      "main"
+    ],
+    "barrier": "unknown",
+    "supervised": "unknown",
+    "osmTags": {
+      "railway": "level_crossing"
+    }
+  },
+  {
+    "index": 17,
+    "id": "osm/node/3499714097",
+    "allNodes": [
+      "osm/node/3499714097"
+    ],
+    "name": "unclassified Level Crossing",
+    "explicitName": null,
+    "lat": 31.6193624,
+    "lon": 74.7750113,
+    "roadNames": [
+      "unclassified"
+    ],
+    "railCorridors": [
+      "main"
+    ],
+    "barrier": "unknown",
+    "supervised": "unknown",
+    "osmTags": {
+      "railway": "level_crossing",
+      "source": "Bing"
+    }
+  },
+  {
+    "index": 18,
+    "id": "osm/node/3499714137",
+    "allNodes": [
+      "osm/node/3499714137",
+      "osm/node/8748420305"
+    ],
+    "name": "ODR20 (tertiary) Level Crossing",
+    "explicitName": null,
+    "lat": 31.6225969,
+    "lon": 74.7970268,
+    "roadNames": [
+      "ODR20 (tertiary)"
+    ],
+    "railCorridors": [
+      "main",
+      "rail"
+    ],
+    "barrier": "unknown",
+    "supervised": "unknown",
+    "osmTags": {
+      "railway": "level_crossing",
+      "source": "Bing"
+    }
+  },
+  {
+    "index": 19,
+    "id": "osm/node/3821552840",
+    "allNodes": [
+      "osm/node/3821552840"
+    ],
+    "name": "track Level Crossing",
+    "explicitName": null,
+    "lat": 31.6176567,
+    "lon": 74.7634494,
+    "roadNames": [
+      "track"
+    ],
+    "railCorridors": [
+      "main"
+    ],
+    "barrier": "unknown",
+    "supervised": "unknown",
+    "osmTags": {
+      "railway": "level_crossing"
+    }
+  },
+  {
+    "index": 20,
+    "id": "osm/node/3821829837",
+    "allNodes": [
+      "osm/node/3821829837"
+    ],
+    "name": "residential Level Crossing",
+    "explicitName": null,
+    "lat": 31.6119103,
+    "lon": 74.8571522,
+    "roadNames": [
+      "residential"
+    ],
+    "railCorridors": [
+      "main"
+    ],
+    "barrier": "unknown",
+    "supervised": "unknown",
+    "osmTags": {
+      "railway": "level_crossing"
+    }
+  },
+  {
+    "index": 21,
+    "id": "osm/node/3821832764",
+    "allNodes": [
+      "osm/node/3821832764"
+    ],
+    "name": "unclassified Level Crossing",
+    "explicitName": null,
+    "lat": 31.5712125,
+    "lon": 74.8900101,
+    "roadNames": [
+      "unclassified"
+    ],
+    "railCorridors": [
+      "main"
+    ],
+    "barrier": "unknown",
+    "supervised": "unknown",
+    "osmTags": {
+      "railway": "level_crossing"
+    }
+  },
+  {
+    "index": 22,
+    "id": "osm/node/3821832776",
+    "allNodes": [
+      "osm/node/3821832776"
+    ],
+    "name": "tertiary Level Crossing",
+    "explicitName": null,
+    "lat": 31.5543072,
+    "lon": 74.8942753,
+    "roadNames": [
+      "tertiary"
+    ],
+    "railCorridors": [
+      "main"
+    ],
+    "barrier": "unknown",
+    "supervised": "unknown",
+    "osmTags": {
+      "railway": "level_crossing"
+    }
+  },
+  {
+    "index": 23,
+    "id": "osm/node/4882298199",
+    "allNodes": [
+      "osm/node/4882298199"
+    ],
+    "name": "unclassified Level Crossing",
+    "explicitName": null,
+    "lat": 31.6916959,
+    "lon": 74.9436445,
+    "roadNames": [
+      "unclassified"
+    ],
+    "railCorridors": [
+      "North Western railway Verka Jassar Branch"
+    ],
+    "barrier": "unknown",
+    "supervised": "unknown",
+    "osmTags": {
+      "railway": "level_crossing",
+      "source": "bing"
+    }
+  },
+  {
+    "index": 24,
+    "id": "osm/node/6054757820",
+    "allNodes": [
+      "osm/node/6054757820"
+    ],
+    "name": "unclassified Level Crossing",
+    "explicitName": null,
+    "lat": 31.6968325,
+    "lon": 74.9592946,
+    "roadNames": [
+      "unclassified"
+    ],
+    "railCorridors": [
+      "main"
+    ],
+    "barrier": "unknown",
+    "supervised": "unknown",
+    "osmTags": {
+      "railway": "level_crossing"
+    }
+  },
+  {
+    "index": 25,
+    "id": "osm/node/6054757832",
+    "allNodes": [
+      "osm/node/6054757832"
+    ],
+    "name": "unclassified Level Crossing",
+    "explicitName": null,
+    "lat": 31.7075815,
+    "lon": 74.9448369,
+    "roadNames": [
+      "unclassified"
+    ],
+    "railCorridors": [
+      "North Western railway Verka Jassar Branch"
+    ],
+    "barrier": "unknown",
+    "supervised": "unknown",
+    "osmTags": {
+      "railway": "level_crossing"
+    }
+  },
+  {
+    "index": 26,
+    "id": "osm/node/6056058178",
+    "allNodes": [
+      "osm/node/6056058178",
+      "osm/node/6056058179"
+    ],
+    "name": "unclassified Level Crossing",
+    "explicitName": null,
+    "lat": 31.6157532,
+    "lon": 74.9557907,
+    "roadNames": [
+      "unclassified"
+    ],
+    "railCorridors": [
+      "main"
+    ],
+    "barrier": "unknown",
+    "supervised": "unknown",
+    "osmTags": {
+      "railway": "level_crossing"
+    }
+  },
+  {
+    "index": 27,
+    "id": "osm/node/6056058207",
+    "allNodes": [
+      "osm/node/6056058207",
+      "osm/node/6056058208"
+    ],
+    "name": "tertiary Level Crossing",
+    "explicitName": null,
+    "lat": 31.6122592,
+    "lon": 74.9692522,
+    "roadNames": [
+      "tertiary"
+    ],
+    "railCorridors": [
+      "main"
+    ],
+    "barrier": "unknown",
+    "supervised": "unknown",
+    "osmTags": {
+      "railway": "level_crossing"
+    }
+  },
+  {
+    "index": 28,
+    "id": "osm/node/6056058284",
+    "allNodes": [
+      "osm/node/6056058284",
+      "osm/node/6056058285"
+    ],
+    "name": "tertiary Level Crossing",
+    "explicitName": null,
+    "lat": 31.6051345,
+    "lon": 74.9966032,
+    "roadNames": [
+      "tertiary"
+    ],
+    "railCorridors": [
+      "main"
+    ],
+    "barrier": "unknown",
+    "supervised": "unknown",
+    "osmTags": {
+      "railway": "level_crossing"
+    }
+  },
+  {
+    "index": 29,
+    "id": "osm/node/6058292719",
+    "allNodes": [
+      "osm/node/6058292719"
+    ],
+    "name": "unclassified Level Crossing",
+    "explicitName": null,
+    "lat": 31.7090372,
+    "lon": 74.9805106,
+    "roadNames": [
+      "unclassified"
+    ],
+    "railCorridors": [
+      "main"
+    ],
+    "barrier": "unknown",
+    "supervised": "unknown",
+    "osmTags": {
+      "railway": "level_crossing"
+    }
+  },
+  {
+    "index": 30,
+    "id": "osm/node/6058630893",
+    "allNodes": [
+      "osm/node/6058630893"
+    ],
+    "name": "residential Level Crossing",
+    "explicitName": null,
+    "lat": 31.7146973,
+    "lon": 74.9904711,
+    "roadNames": [
+      "residential"
+    ],
+    "railCorridors": [
+      "main"
+    ],
+    "barrier": "unknown",
+    "supervised": "unknown",
+    "osmTags": {
+      "railway": "level_crossing"
+    }
+  },
+  {
+    "index": 31,
+    "id": "osm/node/6058630943",
+    "allNodes": [
+      "osm/node/6058630943"
+    ],
+    "name": "unclassified Level Crossing",
+    "explicitName": null,
+    "lat": 31.7187022,
+    "lon": 74.9975675,
+    "roadNames": [
+      "unclassified"
+    ],
+    "railCorridors": [
+      "main"
+    ],
+    "barrier": "unknown",
+    "supervised": "unknown",
+    "osmTags": {
+      "railway": "level_crossing"
+    }
+  },
+  {
+    "index": 32,
+    "id": "osm/node/6063305950",
+    "allNodes": [
+      "osm/node/6063305950"
+    ],
+    "name": "unclassified Level Crossing",
+    "explicitName": null,
+    "lat": 31.6252096,
+    "lon": 74.8146549,
+    "roadNames": [
+      "unclassified"
+    ],
+    "railCorridors": [
+      "main"
+    ],
+    "barrier": "unknown",
+    "supervised": "unknown",
+    "osmTags": {
+      "railway": "level_crossing"
+    }
+  },
+  {
+    "index": 33,
+    "id": "osm/node/8179551888",
+    "allNodes": [
+      "osm/node/8179551888"
+    ],
+    "name": "Amritsar Level Crossing #33",
+    "explicitName": null,
+    "lat": 31.6345207,
+    "lon": 74.9058998,
+    "roadNames": [],
+    "railCorridors": [
+      "main"
+    ],
+    "barrier": "none",
+    "supervised": "unknown",
+    "osmTags": {
+      "railway": "level_crossing"
+    }
+  },
+  {
+    "index": 34,
+    "id": "osm/node/10217021379",
+    "allNodes": [
+      "osm/node/10217021379",
+      "osm/node/10217021387"
+    ],
+    "name": "unclassified Level Crossing",
+    "explicitName": null,
+    "lat": 31.5996778,
+    "lon": 75.0170747,
+    "roadNames": [
+      "unclassified"
+    ],
+    "railCorridors": [
+      "main"
+    ],
+    "barrier": "unknown",
+    "supervised": "unknown",
+    "osmTags": {
+      "railway": "level_crossing"
+    }
+  },
+  {
+    "index": 35,
+    "id": "osm/node/10230371442",
+    "allNodes": [
+      "osm/node/10230371442"
+    ],
+    "name": "service Level Crossing",
+    "explicitName": null,
+    "lat": 31.560684,
+    "lon": 74.8926139,
+    "roadNames": [
+      "service"
+    ],
+    "railCorridors": [
+      "main"
+    ],
+    "barrier": "unknown",
+    "supervised": "unknown",
+    "osmTags": {
+      "railway": "level_crossing"
+    }
+  },
+  {
+    "index": 36,
+    "id": "osm/node/10230495136",
+    "allNodes": [
+      "osm/node/10230495136"
+    ],
+    "name": "residential Level Crossing",
+    "explicitName": null,
+    "lat": 31.5516022,
+    "lon": 74.8949567,
+    "roadNames": [
+      "residential"
+    ],
+    "railCorridors": [
+      "main"
+    ],
+    "barrier": "unknown",
+    "supervised": "unknown",
+    "osmTags": {
+      "railway": "level_crossing"
+    }
+  },
+  {
+    "index": 37,
+    "id": "osm/node/10246229914",
+    "allNodes": [
+      "osm/node/10246229914"
+    ],
+    "name": "unclassified Level Crossing",
+    "explicitName": null,
+    "lat": 31.5939177,
+    "lon": 74.8825565,
+    "roadNames": [
+      "unclassified"
+    ],
+    "railCorridors": [
+      "main"
+    ],
+    "barrier": "unknown",
+    "supervised": "unknown",
+    "osmTags": {
+      "railway": "level_crossing"
+    }
+  }
+]

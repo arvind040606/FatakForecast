@@ -24,7 +24,7 @@ export const MetricsBar: React.FC<MetricsBarProps> = ({ metrics }) => {
       bg: 'rgba(56, 189, 248, 0.08)'
     },
     {
-      label: 'VERIFIED OPEN',
+      label: 'PREDICTED OPEN',
       value: metrics.openCount,
       subtext: 'Safe Passage Active',
       icon: CheckCircle,
@@ -32,7 +32,7 @@ export const MetricsBar: React.FC<MetricsBarProps> = ({ metrics }) => {
       bg: 'var(--status-open-bg)'
     },
     {
-      label: 'VERIFIED CLOSED',
+      label: 'PREDICTED CLOSED',
       value: metrics.closedCount,
       subtext: metrics.closedCount > 0 ? 'Interlocking Locked' : 'All Clear',
       icon: AlertCircle,
@@ -50,18 +50,18 @@ export const MetricsBar: React.FC<MetricsBarProps> = ({ metrics }) => {
     {
       label: 'ACTIVE SECTOR TRAINS',
       value: metrics.activeSectorTrains,
-      subtext: 'GPS Telemetry Linked',
+      subtext: 'Live Telemetry Linked',
       icon: Train,
       color: 'var(--accent-cyan-light)',
       bg: 'rgba(125, 211, 252, 0.08)'
     },
     {
       label: 'FEED FRESHNESS',
-      value: `${metrics.feedLatencyMs}ms`,
-      subtext: metrics.feedStatus === 'ONLINE_SYNCHRONIZED' ? 'CRIS Synchronized' : 'Degraded Feed',
+      value: metrics.feedLatencyMs != null ? `${metrics.feedLatencyMs}ms` : 'Not Measured',
+      subtext: metrics.feedStatus === 'CONNECTED' ? 'Live Provider Stream' : metrics.feedStatus === 'ONLINE_SYNCHRONIZED' ? 'WebSocket Stream' : 'Provider Disconnected',
       icon: Wifi,
-      color: 'var(--status-open)',
-      bg: 'rgba(16, 185, 129, 0.08)'
+      color: metrics.feedStatus === 'CONNECTED' ? 'var(--status-open)' : 'var(--text-muted)',
+      bg: metrics.feedStatus === 'CONNECTED' ? 'rgba(16, 185, 129, 0.08)' : 'rgba(239, 68, 68, 0.08)'
     }
   ];
 
