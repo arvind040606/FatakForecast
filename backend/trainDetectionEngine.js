@@ -24,6 +24,13 @@ export const CROSSING_DETECTION_THRESHOLDS = {
   GATE_CLEARANCE_MIN_SEC: 60,   // 1 minute
   GATE_CLEARANCE_MAX_SEC: 180,  // 3 minutes
 
+  // Maximum realistic duration a physical level crossing barrier is kept closed in Northern Railway Amritsar operations: 15 minutes (900s)
+  // Indian Railways rules prohibit keeping road traffic blocked for excessive durations without clearance.
+  MAX_GATE_CLOSURE_DURATION_SEC: 900,
+  MAX_GATE_WAIT_SEC: 900,
+  // Maximum gap between consecutive train passage times to permit continuous barrier closure: 3.5 minutes
+  MAX_CONTINUOUS_PASSAGE_GAP_MIN: 3.5,
+
   // Imminent closure expectation: train arrival <= 15 minutes (900s)
   IMMINENT_WARNING_SEC: 900,
   // Interlocking track circuit approach distance: 15.0 km
@@ -494,8 +501,13 @@ export class TrainDetectionEngine {
       let anchoredPassageMs = null;
       if (isSameTrain && crossing.expectedTrainArrival) {
         const parsed = new Date(crossing.expectedTrainArrival).getTime();
-        // Plausibility check: within last 10 minutes or future up to 4 hours
-        if (!isNaN(parsed) && parsed > now - 600000 && parsed < now + 14400000) {
+        const physicalEtaMs = now + (distMeters / speedMs) * 1000;
+        const driftMs = Math.abs(parsed - physicalEtaMs);
+        // Plausibility & reality check:
+        // A train physically > 2.0 km away CANNOT have a passage time in the past or immediately right now!
+        // Anchors that have elapsed in the past while train is still far away, or that drift > 15 min, are invalidated.
+        const isPhysicallyPlausible = (item.trackDistanceKm <= 2.0 || parsed >= now) && driftMs <= 900000;
+        if (!isNaN(parsed) && parsed > now - 180000 && parsed < now + 14400000 && isPhysicallyPlausible) {
           anchoredPassageMs = parsed;
         }
       }
@@ -585,7 +597,10 @@ export class TrainDetectionEngine {
     // Extended outlook candidates: between 60 and 120 minutes
     const extendedCandidates = processedApproaching.filter(c => c.etaMinutes > CROSSING_DETECTION_THRESHOLDS.PRIMARY_FORECAST_HORIZON_MIN && c.etaMinutes <= CROSSING_DETECTION_THRESHOLDS.EXTENDED_HORIZON_MIN);
 
-    // Multi-Train Continuous Closure grouping (merge if within 4 min threshold or intervals overlap)
+    // Multi-Train Continuous Closure grouping
+    // Railway Ground Truth: Gatemen ONLY keep boom barriers locked down between trains if the passage gap
+    // is <= 3.5 minutes. If > 3.5 minutes, gates MUST be opened to clear road vehicular congestion.
+    // Total combined continuous closure is strictly capped to at most 15 minutes (900 seconds).
     const closureBlocks = [];
     let currentBlock = null;
 
@@ -604,10 +619,17 @@ export class TrainDetectionEngine {
 
       const prevCand = currentBlock.items[currentBlock.items.length - 1];
       const passageGapMin = (cand.passageTime.getTime() - prevCand.passageTime.getTime()) / 60000;
-      const overlaps = cand.closeTime.getTime() <= currentBlock.closureEnd.getTime();
-      const withinThreshold = passageGapMin >= 0 && passageGapMin <= 4.0;
+      
+      const mergedEndMs = Math.max(currentBlock.closureEnd.getTime(), cand.openTime.getTime());
+      const mergedDurationMin = (mergedEndMs - currentBlock.closureStart.getTime()) / 60000;
 
-      if (overlaps || withinThreshold) {
+      // STRICT RAILWAY RULES FOR CONTINUOUS CLOSURE:
+      // 1. Passage gap between consecutive trains must be <= 3.5 min (otherwise gate opens in between).
+      // 2. Combined total duration must NOT exceed 15.0 minutes under any circumstance.
+      const isConsecutivePassage = passageGapMin >= 0 && passageGapMin <= CROSSING_DETECTION_THRESHOLDS.MAX_CONTINUOUS_PASSAGE_GAP_MIN;
+      const withinMaxDuration = mergedDurationMin <= 15.0;
+
+      if (isConsecutivePassage && withinMaxDuration) {
         currentBlock.items.push(cand);
         if (cand.closeTime.getTime() < currentBlock.closureStart.getTime()) {
           currentBlock.closureStart = cand.closeTime;
@@ -640,7 +662,7 @@ export class TrainDetectionEngine {
     if (primaryCandidates.length > 0 && closureBlocks.length > 0) {
       const activeBlock = closureBlocks[0];
       const isContinuous = activeBlock.items.length > 1;
-      const durationMin = Number(((activeBlock.closureEnd.getTime() - activeBlock.closureStart.getTime()) / 60000).toFixed(1));
+      const durationMin = Number(Math.min(15.0, ((activeBlock.closureEnd.getTime() - activeBlock.closureStart.getTime()) / 60000)).toFixed(1));
       const primaryCand = activeBlock.items[0];
       const train = primaryCand.train;
       const trackDistKm = primaryCand.trackDistanceKm;
@@ -658,16 +680,26 @@ export class TrainDetectionEngine {
       const timeToClosureSec = Math.round((closureStartMs - now) / 1000);
 
       // 1. Imminent / Locked threshold (CLOSED)
-      // When current time is within active closure block OR train is actively traversing OR within barrier lock lead
-      const isClosed = primaryCand.isTraversing ||
-        (now >= closureStartMs && now <= closureEndMs) ||
-        (timeToClosureSec <= 0 && now <= closureEndMs);
+      // Real-World Railway Interlocking Rules:
+      // A crossing is ONLY physically closed if:
+      // - The train is actively traversing across the roadway (primaryCand.isTraversing), OR
+      // - The train is within the immediate barrier lockdown approach zone (trackDistKm <= 3.5 km OR diffMinutesFirst <= 4.0 min)
+      //   AND current time is within the closure window (now >= closureStartMs or timeToClosureSec <= 0)
+      //   AND the train has not cleared yet (now <= closureEndMs).
+      // A train 10 km, 20 km, or 40 km away (ETA > 5 min) can NEVER cause the gate to be CLOSED!
+      const isWithinImmediateClosureZone = primaryCand.isTraversing || (trackDistKm <= 3.5 || diffMinutesFirst <= 4.0);
+      const isClosed = primaryCand.isTraversing || (
+        isWithinImmediateClosureZone &&
+        (now >= closureStartMs || timeToClosureSec <= 0) &&
+        now <= closureEndMs &&
+        diffMinutesFirst <= 4.0
+      );
 
       // 2. Active approach alert threshold (APPROACHING)
-      // Barrier closing soon, within approach window (timeToClosureSec > 0 and <= 180s or within approach distance)
+      // Barrier closing soon, within approach window (timeToClosureSec > 0 and <= 300s or within approach distance <= 8.0 km and <= 12 min)
       const isApproaching = !isClosed && (
-        (timeToClosureSec > 0 && timeToClosureSec <= 180) ||
-        (diffMinutesFirst <= CROSSING_DETECTION_THRESHOLDS.APPROACH_HORIZON_MIN && trackDistKm <= CROSSING_DETECTION_THRESHOLDS.APPROACH_DISTANCE_KM)
+        (timeToClosureSec > 0 && timeToClosureSec <= 300) ||
+        (diffMinutesFirst <= 12.0 && trackDistKm <= 8.0)
       );
 
       let newStatus = 'OPEN';
@@ -694,11 +726,18 @@ export class TrainDetectionEngine {
         let reopenTimeMs = activeBlock.closureEnd.getTime();
         if (crossing && (crossing.predictedReopenTime || crossing.estimatedGateReopeningTime)) {
           const prevReopenMs = new Date(crossing.predictedReopenTime || crossing.estimatedGateReopeningTime).getTime();
-          if (!isNaN(prevReopenMs) && prevReopenMs > now && prevReopenMs < now + 7200000) {
+          // Only preserve previous reopen timestamp if it is close (<= 120s) to current closure end,
+          // preventing stale / multi-hour stuck timestamps!
+          if (!isNaN(prevReopenMs) && prevReopenMs > now && Math.abs(prevReopenMs - activeBlock.closureEnd.getTime()) <= 120000) {
             reopenTimeMs = prevReopenMs;
           }
         }
-        remainingWaitSec = Math.max(1, Math.round((reopenTimeMs - now) / 1000));
+        // Strict Railway Operational Ceiling: Gate closure wait time NEVER exceeds 15 minutes (900s)
+        const maxReopenMs = now + CROSSING_DETECTION_THRESHOLDS.MAX_GATE_WAIT_SEC * 1000;
+        if (reopenTimeMs > maxReopenMs) {
+          reopenTimeMs = maxReopenMs;
+        }
+        remainingWaitSec = Math.min(CROSSING_DETECTION_THRESHOLDS.MAX_GATE_WAIT_SEC, Math.max(1, Math.round((reopenTimeMs - now) / 1000)));
         const timeToReopenMin = Number((remainingWaitSec / 60).toFixed(1));
         estimatedGateClosingTime = activeBlock.closureStart.toISOString();
         predictedReopenTime = new Date(reopenTimeMs).toISOString();

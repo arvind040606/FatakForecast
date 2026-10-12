@@ -29,6 +29,39 @@ interface TrainScheduleModalProps {
   train: SectorTrain | null;
 }
 
+interface FormattedTimeResult {
+  display: string;
+  isTerminalText: boolean;
+  dateTag?: string;
+}
+
+const formatTimeDisplay = (
+  rawTime: string | null | undefined,
+  isTerminal: boolean,
+  terminalLabel: string
+): FormattedTimeResult => {
+  if (!rawTime || rawTime === '--:--' || rawTime === '-') {
+    if (isTerminal) return { display: terminalLabel, isTerminalText: true };
+    return { display: '--:--', isTerminalText: false };
+  }
+  const clean = String(rawTime).trim();
+  const upper = clean.toUpperCase();
+  if (upper === 'SRC') return { display: 'Origin', isTerminalText: true };
+  if (upper === 'DEST' || upper === 'DSTN') return { display: 'Terminus', isTerminalText: true };
+
+  // Match e.g. "09:20 12-Oct" or "09:20" or "09:20:00"
+  const match = clean.match(/^(\d{1,2}:\d{2})(?::\d{2})?(?:\s+(.+))?$/);
+  if (match) {
+    return {
+      display: match[1],
+      isTerminalText: false,
+      dateTag: match[2] ? match[2].trim() : undefined
+    };
+  }
+
+  return { display: clean, isTerminalText: false };
+};
+
 export const TrainScheduleModal: React.FC<TrainScheduleModalProps> = ({
   isOpen,
   onClose,
@@ -340,6 +373,16 @@ export const TrainScheduleModal: React.FC<TrainScheduleModalProps> = ({
                 );
                 const isDeparted = stop.status === 'departed';
 
+                const arrTime = formatTimeDisplay(stop.actualArrival || stop.scheduledArrival, isOrigin, 'Origin');
+                const schArrTime = (stop.actualArrival && stop.scheduledArrival && stop.actualArrival !== stop.scheduledArrival)
+                  ? formatTimeDisplay(stop.scheduledArrival, isOrigin, 'Origin')
+                  : null;
+
+                const depTime = formatTimeDisplay(stop.actualDeparture || stop.scheduledDeparture, isDestination, 'Terminus');
+                const schDepTime = (stop.actualDeparture && stop.scheduledDeparture && stop.actualDeparture !== stop.scheduledDeparture)
+                  ? formatTimeDisplay(stop.scheduledDeparture, isDestination, 'Terminus')
+                  : null;
+
                 return (
                   <motion.div
                     key={stop.sequence || `${stop.stationCode}-${idx}`}
@@ -424,12 +467,17 @@ export const TrainScheduleModal: React.FC<TrainScheduleModalProps> = ({
                           {/* ARRIVAL */}
                           <div>
                             <div style={{ fontSize: '10px', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600 }}>Arr</div>
-                            <div style={{ fontFamily: 'var(--font-mono)', fontWeight: 700, color: 'var(--text-primary)' }}>
-                              {stop.actualArrival || stop.scheduledArrival || '--:--'}
+                            <div style={{
+                              fontFamily: arrTime.isTerminalText ? 'var(--font-sans)' : 'var(--font-mono)',
+                              fontWeight: 700,
+                              color: arrTime.isTerminalText ? 'var(--accent-primary)' : 'var(--text-primary)',
+                              fontSize: arrTime.isTerminalText ? '12px' : '13px'
+                            }}>
+                              {arrTime.display}
                             </div>
-                            {stop.actualArrival && stop.scheduledArrival && stop.actualArrival !== stop.scheduledArrival && (
+                            {schArrTime && schArrTime.display !== arrTime.display && (
                               <div style={{ fontSize: '10px', color: 'var(--text-dim)', textDecoration: 'line-through', fontFamily: 'var(--font-mono)' }}>
-                                {stop.scheduledArrival}
+                                {schArrTime.display}
                               </div>
                             )}
                           </div>
@@ -437,12 +485,17 @@ export const TrainScheduleModal: React.FC<TrainScheduleModalProps> = ({
                           {/* DEPARTURE */}
                           <div>
                             <div style={{ fontSize: '10px', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600 }}>Dep</div>
-                            <div style={{ fontFamily: 'var(--font-mono)', fontWeight: 700, color: 'var(--text-primary)' }}>
-                              {stop.actualDeparture || stop.scheduledDeparture || '--:--'}
+                            <div style={{
+                              fontFamily: depTime.isTerminalText ? 'var(--font-sans)' : 'var(--font-mono)',
+                              fontWeight: 700,
+                              color: depTime.isTerminalText ? 'var(--accent-primary)' : 'var(--text-primary)',
+                              fontSize: depTime.isTerminalText ? '12px' : '13px'
+                            }}>
+                              {depTime.display}
                             </div>
-                            {stop.actualDeparture && stop.scheduledDeparture && stop.actualDeparture !== stop.scheduledDeparture && (
+                            {schDepTime && schDepTime.display !== depTime.display && (
                               <div style={{ fontSize: '10px', color: 'var(--text-dim)', textDecoration: 'line-through', fontFamily: 'var(--font-mono)' }}>
-                                {stop.scheduledDeparture}
+                                {schDepTime.display}
                               </div>
                             )}
                           </div>

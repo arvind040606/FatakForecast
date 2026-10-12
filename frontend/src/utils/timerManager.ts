@@ -241,7 +241,7 @@ export function getAuthoritativeTargetEpoch(
   const cacheKey = `${crossing.id}:${type}`;
 
   if (type === 'reopen') {
-    const isClosed = crossing.status === 'CLOSED' || crossing.status === 'CLOSURE_REPORTED' || crossing.status === 'CLOSURE_EXPECTED';
+    const isClosed = crossing.status === 'CLOSED' || crossing.status === 'CLOSURE_REPORTED';
     if (!isClosed) {
       if (stableTargetMap.has(cacheKey)) {
         stableTargetMap.delete(cacheKey);
@@ -263,6 +263,11 @@ export function getAuthoritativeTargetEpoch(
     // 2. Relative wait duration
     if (rawTargetMs === null && typeof crossing.remainingWaitSec === 'number' && crossing.remainingWaitSec > 0) {
       rawTargetMs = nowMs + crossing.remainingWaitSec * 1000;
+    }
+
+    // Cap reopen target to realistic railway window (at most 15 minutes = 900s)
+    if (rawTargetMs !== null && rawTargetMs > nowMs + 15 * 60 * 1000) {
+      rawTargetMs = nowMs + 15 * 60 * 1000;
     }
 
     if (rawTargetMs === null) {

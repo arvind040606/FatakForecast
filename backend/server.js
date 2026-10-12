@@ -169,8 +169,13 @@ function loadCrossingAnchors() {
         const saved = activeAnchors[c.id];
         if (saved) {
           const closeMs = saved.estimatedGateClosingTime ? new Date(saved.estimatedGateClosingTime).getTime() : 0;
-          const reopenMs = saved.predictedReopenTime ? new Date(saved.predictedReopenTime).getTime() : 0;
-          if ((closeMs > now - 180000 && closeMs < now + 7200000) || (reopenMs > now && reopenMs < now + 3600000)) {
+          let reopenMs = saved.predictedReopenTime ? new Date(saved.predictedReopenTime).getTime() : 0;
+          // Clamp reopened time to at most 15 minutes into the future
+          if (reopenMs > now + 900000) {
+            reopenMs = now + 900000;
+            saved.predictedReopenTime = new Date(reopenMs).toISOString();
+          }
+          if ((closeMs > now - 180000 && closeMs < now + 7200000) || (reopenMs > now && reopenMs <= now + 900000)) {
             c.upcomingTrainId = saved.upcomingTrainId;
             c.estimatedGateClosingTime = saved.estimatedGateClosingTime;
             c.expectedTrainArrival = saved.expectedTrainArrival;
@@ -186,13 +191,21 @@ function loadCrossingAnchors() {
 function saveCrossingAnchors() {
   try {
     const activeAnchors = {};
+    const now = Date.now();
     CROSSINGS.forEach(c => {
       if (c.upcomingTrainId && (c.estimatedGateClosingTime || c.predictedReopenTime)) {
+        let reopenTime = c.predictedReopenTime;
+        if (reopenTime) {
+          const rMs = new Date(reopenTime).getTime();
+          if (rMs > now + 900000) {
+            reopenTime = new Date(now + 900000).toISOString();
+          }
+        }
         activeAnchors[c.id] = {
           upcomingTrainId: c.upcomingTrainId,
           estimatedGateClosingTime: c.estimatedGateClosingTime,
           expectedTrainArrival: c.expectedTrainArrival,
-          predictedReopenTime: c.predictedReopenTime,
+          predictedReopenTime: reopenTime,
           anchoredTrainDelay: c.anchoredTrainDelay || 0,
           status: c.status
         };

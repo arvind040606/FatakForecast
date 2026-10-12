@@ -58,6 +58,9 @@ export class RailkitService {
     // Validated trains map: holds the latest mapped state of all tracked trains
     this.validatedTrainsMap = new Map();
 
+    // Persistent train route schedule cache (24 hours TTL, zero API credit waste)
+    this.scheduleCache = new Map();
+
     // Automatic Train Discovery: Dynamically discovered via RailKit official liveAtStation hub API
     this.discoveredTrainNumbers = [];
     this.discoveredTrainRecords = [];
@@ -449,23 +452,34 @@ export class RailkitService {
     const schedule = [];
     if (Array.isArray(data.route)) {
       data.route.forEach((r, idx) => {
+        const schArr = r.arrival?.scheduled || r.schArr || r.scheduledArrival || null;
+        const schDep = r.departure?.scheduled || r.schDep || r.scheduledDeparture || null;
+        const actArr = r.arrival?.actual || r.actArr || r.actualArrival || null;
+        const actDep = r.departure?.actual || r.actDep || r.actualDeparture || null;
+        const delayArr = typeof r.arrival?.delay === 'number' ? r.arrival.delay : (typeof r.delayArr === 'number' ? r.delayArr : 0);
+        const delayDep = typeof r.departure?.delay === 'number' ? r.departure.delay : (typeof r.delayDep === 'number' ? r.delayDep : 0);
+
         schedule.push({
           sequence: r.sequence || idx + 1,
-          stationCode: r.stnCode || '',
-          stationName: r.stnName || r.stnCode || '',
+          stationCode: r.stnCode || r.stationCode || '',
+          stationName: r.stnName || r.stationName || r.stnCode || '',
           isHalt: Boolean(r.isHalt),
           status: r.status || 'upcoming',
           platform: r.platform || null,
           distance: typeof r.distance === 'number' ? r.distance : 0,
-          scheduledArrival: r.schArr || null,
-          scheduledDeparture: r.schDep || null,
-          actualArrival: r.actArr || null,
-          actualDeparture: r.actDep || null,
-          delayArrival: typeof r.delayArr === 'number' ? r.delayArr : 0,
-          delayDeparture: typeof r.delayDep === 'number' ? r.delayDep : 0,
+          scheduledArrival: schArr,
+          scheduledDeparture: schDep,
+          actualArrival: actArr,
+          actualDeparture: actDep,
+          delayArrival: delayArr,
+          delayDeparture: delayDep,
           coachPosition
         });
       });
+    }
+
+    if (schedule.length > 0 && this.scheduleCache) {
+      this.scheduleCache.set(trainNumber, schedule);
     }
 
     return {
@@ -654,13 +668,34 @@ export class RailkitService {
     this.activePollPromise = (async () => {
       try {
         // 1. Automatically discover all active trains arriving or departing within the 4-hour window
-        const trainNumbersToQuery = await this.discoverActiveTrains(force);
-        if (!trainNumbersToQuery || trainNumbersToQuery.length === 0) {
+        const discoveredNumbers = await this.discoverActiveTrains(force);
+        if (!discoveredNumbers || discoveredNumbers.length === 0) {
           if (!this.isQuotaExhausted && !this.isAuthError) {
             this.status = 'CONNECTED';
             this.lastSuccessfulSync = new Date().toISOString();
           }
           return { success: true, count: 0, reason: 'Zero trains active in Amritsar sector' };
+        }
+
+        const now = Date.now();
+        // Intelligent Credit Conservation:
+        // Do NOT poll terminated/cancelled trains or trains deep outside sector every cycle.
+        const trainNumbersToQuery = discoveredNumbers.filter(num => {
+          const existing = this.validatedTrainsMap.get(num);
+          if (!existing) return true; // Newly discovered: query once
+          if (existing.status === 'TERMINATED' || existing.status === 'CANCELLED') {
+            return false; // Zero credit waste on ended journeys
+          }
+          if (existing.status === 'OUT_OF_SECTOR' && (existing.distanceFromAmritsarKm || 0) > 60) {
+            // Far outside sector: query at most once every 12 minutes
+            const lastPing = existing.lastPing ? new Date(existing.lastPing).getTime() : 0;
+            return (now - lastPing) > 12 * 60 * 1000;
+          }
+          return true; // Active or approaching train
+        });
+
+        if (trainNumbersToQuery.length === 0) {
+          return { success: true, count: 0, reason: 'All discovered trains currently outside sector or terminated (credits saved)' };
         }
 
         let successfulPings = 0;
@@ -774,9 +809,24 @@ export class RailkitService {
   }
 
   getTrainSchedule(trainNumber) {
-    const cleanNum = String(trainNumber).trim().padStart(5, '0').slice(-5);
-    const t = this.validatedTrainsMap.get(cleanNum);
-    return t ? t.schedule || [] : [];
+    const rawClean = String(trainNumber || '').trim();
+    const cleanNum = rawClean.padStart(5, '0').slice(-5);
+    const t = this.validatedTrainsMap.get(cleanNum) || this.validatedTrainsMap.get(rawClean);
+    if (t && Array.isArray(t.schedule) && t.schedule.length > 0) return t.schedule;
+
+    const cachedSched = this.scheduleCache?.get(cleanNum) || this.scheduleCache?.get(rawClean);
+    if (cachedSched && cachedSched.length > 0) return cachedSched;
+
+    for (const [k, v] of this.cache.entries()) {
+      if ((k.startsWith(cleanNum) || k.startsWith(rawClean)) && v.data?.route) {
+        const mapped = this.mapRailkitTrain(v.data, new Date().toISOString());
+        if (mapped?.schedule && mapped.schedule.length > 0) {
+          this.scheduleCache?.set(cleanNum, mapped.schedule);
+          return mapped.schedule;
+        }
+      }
+    }
+    return [];
   }
 
   async getLiveStationTrains(stationCode, hours = 2) {

@@ -286,16 +286,29 @@ export const CrossingDetailPanel: React.FC<CrossingDetailPanelProps> = ({
                     <span style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' }}>
                       Following Approaching Trains ({crossing.subsequentTrains.length})
                     </span>
-                    {crossing.combinedClosure?.isContinuous && (
+                    {crossing.combinedClosure?.isContinuous ? (
                       <span style={{
                         fontSize: '9.5px',
                         fontWeight: 700,
                         backgroundColor: '#FEF3C7',
                         color: '#92400E',
                         padding: '1px 6px',
-                        borderRadius: '3px'
+                        borderRadius: '3px',
+                        border: '1px solid #FCD34D'
                       }}>
-                        Continuous Closure
+                        ⚡ Continuous Closure
+                      </span>
+                    ) : (
+                      <span style={{
+                        fontSize: '9.5px',
+                        fontWeight: 700,
+                        backgroundColor: '#EFF6FF',
+                        color: '#1E40AF',
+                        padding: '1px 6px',
+                        borderRadius: '3px',
+                        border: '1px solid #BFDBFE'
+                      }}>
+                        🔄 Gate Reopens Between Trains
                       </span>
                     )}
                   </div>

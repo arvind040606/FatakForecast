@@ -119,7 +119,10 @@ export const CrossingsView: React.FC<CrossingsViewProps> = ({
   };
 
   const getStatusBadge = (crossing: RailwayCrossing) => {
-    if (crossing.status === 'CLOSURE_EXPECTED' || crossing.status === 'CLOSED' || crossing.status === 'CLOSURE_REPORTED') {
+    if (crossing.status === 'CLOSED' || crossing.status === 'CLOSURE_REPORTED') {
+      return { label: 'GATE CLOSED', color: 'var(--critical-red)', bg: 'var(--status-closed-bg)', border: 'var(--status-closed-border)' };
+    }
+    if (crossing.status === 'CLOSURE_EXPECTED') {
       return { label: 'CLOSURE EXPECTED', color: 'var(--critical-red)', bg: 'var(--status-closed-bg)', border: 'var(--status-closed-border)' };
     }
     if (crossing.status === 'APPROACHING') {
@@ -392,20 +395,25 @@ export const CrossingsView: React.FC<CrossingsViewProps> = ({
                     </div>
                     {trainInfo.secondaryTrains && trainInfo.secondaryTrains.length > 0 && (
                       <div style={{
-                        marginTop: '4px',
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: '4px',
+                        marginTop: '5px',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '2px',
                         fontSize: '9.5px',
                         fontWeight: 700,
-                        backgroundColor: '#FEF3C7',
-                        color: '#92400E',
-                        padding: '1px 5px',
-                        borderRadius: '3px',
-                        border: '1px solid #FCD34D'
+                        backgroundColor: crossing.combinedClosure?.isContinuous ? '#FEF3C7' : '#EFF6FF',
+                        color: crossing.combinedClosure?.isContinuous ? '#92400E' : '#1E40AF',
+                        padding: '3px 6px',
+                        borderRadius: '4px',
+                        border: `1px solid ${crossing.combinedClosure?.isContinuous ? '#FCD34D' : '#BFDBFE'}`
                       }}>
-                        <span>+{trainInfo.secondaryTrains.length} following:</span>
-                        <span>#{trainInfo.secondaryTrains.map(t => t.trainNumber).join(', #')}</span>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '4px' }}>
+                          <span>{crossing.combinedClosure?.isContinuous ? '⚡ Continuous Closure:' : '🔄 Reopens between trains:'}</span>
+                          <span style={{ fontFamily: 'var(--font-mono)' }}>+{trainInfo.secondaryTrains.length} following</span>
+                        </div>
+                        <div style={{ fontWeight: 600, fontSize: '9px', opacity: 0.9 }}>
+                          Next: #{trainInfo.secondaryTrains[0].trainNumber} {trainInfo.secondaryTrains[0].etaMinutes ? `(~${Math.round(trainInfo.secondaryTrains[0].etaMinutes)}m)` : ''}
+                        </div>
                       </div>
                     )}
                   </div>
@@ -416,7 +424,9 @@ export const CrossingsView: React.FC<CrossingsViewProps> = ({
                       {(() => {
                         const isClosed = crossing.status === 'CLOSED' || crossing.status === 'CLOSURE_REPORTED';
                         const isClosureExpected = crossing.status === 'CLOSURE_EXPECTED';
-                        const waitSec = getDynamicWaitSec(crossing);
+                        const isApproaching = crossing.status === 'APPROACHING';
+                        const rawWait = getDynamicWaitSec(crossing);
+                        const waitSec = Math.min(rawWait, 900); // Realistic railway wait ceiling (max 15m)
                         const closeSec = getDynamicClosureSec(crossing);
 
                         const { minutes: closeMin, seconds: closeRem } = formatCountdown(closeSec);
@@ -428,16 +438,19 @@ export const CrossingsView: React.FC<CrossingsViewProps> = ({
                             : 'CLOSED (Traversing)';
                         }
                         if (isClosureExpected) {
-                          if (waitSec > 0 && closeSec <= 0) {
-                            return `CLOSED (~${waitMin}m ${waitRem}s wait)`;
-                          }
                           if (closeSec > 0) {
                             return `CLOSES IN ~${closeMin}m ${closeRem}s`;
                           }
                           return 'CLOSURE EXPECTED';
                         }
+                        if (isApproaching) {
+                          if (closeSec > 0) {
+                            return `CLOSES IN ~${closeMin}m ${closeRem}s`;
+                          }
+                          return 'TRAIN APPROACHING';
+                        }
                         if (crossing.countdownAvailable && closeSec > 0 && closeSec < 3600) {
-                          return `~${closeMin}m ${closeRem}s`;
+                          return `CLOSES IN ~${closeMin}m ${closeRem}s`;
                         }
                         return 'Open Passage';
                       })()}
@@ -556,7 +569,9 @@ export const CrossingsView: React.FC<CrossingsViewProps> = ({
                         {(() => {
                           const isClosed = crossing.status === 'CLOSED' || crossing.status === 'CLOSURE_REPORTED';
                           const isClosureExpected = crossing.status === 'CLOSURE_EXPECTED';
-                          const waitSec = getDynamicWaitSec(crossing);
+                          const isApproaching = crossing.status === 'APPROACHING';
+                          const rawWait = getDynamicWaitSec(crossing);
+                          const waitSec = Math.min(rawWait, 900);
                           const closeSec = getDynamicClosureSec(crossing);
 
                           const { minutes: closeMin, seconds: closeRem } = formatCountdown(closeSec);
@@ -569,16 +584,19 @@ export const CrossingsView: React.FC<CrossingsViewProps> = ({
                               : 'CLOSED (Traversing)';
                           }
                           if (isClosureExpected) {
-                            if (waitSec > 0 && closeSec <= 0) {
-                              return `CLOSED (~${waitMin}m ${waitRem}s wait)`;
-                            }
                             if (closeSec > 0) {
                               return `CLOSES IN ~${closeMin}m ${closeRem}s`;
                             }
                             return 'CLOSURE EXPECTED';
                           }
+                          if (isApproaching) {
+                            if (closeSec > 0) {
+                              return `CLOSES IN ~${closeMin}m ${closeRem}s`;
+                            }
+                            return 'TRAIN APPROACHING';
+                          }
                           if (crossing.countdownAvailable && closeSec > 0 && closeSec < 3600) {
-                            return `~${closeMin}m ${closeRem}s`;
+                            return `CLOSES IN ~${closeMin}m ${closeRem}s`;
                           }
                           return 'Clear Passage';
                         })()}
