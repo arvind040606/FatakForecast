@@ -200,75 +200,112 @@ class RailwayAPIService {
     }, 4000);
   }
 
+  private consecutivePollErrors: number = 0;
+  private currentPollIntervalMs: number = 2500;
+  private isPollFetching: boolean = false;
+
   private startFallbackPolling() {
     if (this.pollingTimer) return;
-    const fetchLatest = async () => {
-      try {
-        const baseUrl = this.getBaseUrl();
-        // High-Speed Primary: Single-roundtrip live telemetry endpoint
-        const liveRes = await fetch(`${baseUrl}/api/telemetry/live`, { signal: AbortSignal.timeout(8000) });
-        if (liveRes.ok) {
-          const liveData = await liveRes.json();
-          if (liveData.crossings && liveData.crossings.length > 0) {
-            const payload: TelemetryPayload = {
-              type: 'TELEMETRY_UPDATE',
-              timestamp: liveData.timestamp || new Date().toISOString(),
-              metrics: liveData.metrics || INITIAL_METRICS,
-              crossings: liveData.crossings,
-              trains: Array.isArray(liveData.trains) ? liveData.trains : [],
-              activeCorridors: liveData.activeCorridors || liveData.corridors || INITIAL_CORRIDORS
-            };
-            this.notifyListeners(payload);
-            return;
-          }
-        }
-
-        // Secondary fallback: parallel requests
-        const [res, trainsRes] = await Promise.all([
-          fetch(`${baseUrl}/api/crossings`, { signal: AbortSignal.timeout(8000) }),
-          fetch(`${baseUrl}/api/trains`, { signal: AbortSignal.timeout(8000) }).catch(() => null)
-        ]);
-        if (res.ok) {
-          const data = await res.json();
-          const trainsData = trainsRes && trainsRes.ok ? await trainsRes.json() : { trains: [] };
-
-          const payload: TelemetryPayload = {
-            type: 'TELEMETRY_UPDATE',
-            timestamp: new Date().toISOString(),
-            metrics: data.metrics || this.lastGoodPayload?.metrics || INITIAL_METRICS,
-            crossings: data.crossings || this.lastGoodPayload?.crossings || INITIAL_CROSSINGS,
-            trains: Array.isArray(trainsData.trains) ? trainsData.trains : (this.lastGoodPayload?.trains || []),
-            activeCorridors: data.corridors || this.lastGoodPayload?.activeCorridors || INITIAL_CORRIDORS
-          };
-          this.notifyListeners(payload);
-        }
-      } catch (e) {
-        // Anti-glitch guard: NEVER overwrite active live data with static simulation on temporary network glitch
-        if (!this.lastGoodPayload) {
-          this.emitLocalSimulation();
-        }
-      }
-    };
-
-    fetchLatest();
-    this.pollingTimer = setInterval(fetchLatest, 2500);
+    this.scheduleNextPoll(100);
 
     // Credit conservation & energy management: pause polling when tab is hidden, resume on active
     if (typeof document !== 'undefined') {
       const handleVisibilityChange = () => {
         if (document.hidden) {
           if (this.pollingTimer) {
-            clearInterval(this.pollingTimer);
+            clearTimeout(this.pollingTimer);
             this.pollingTimer = null;
           }
         } else {
-          fetchLatest();
-          if (!this.pollingTimer) {
-            this.pollingTimer = setInterval(fetchLatest, 2500);
-          }
+          this.scheduleNextPoll(500);
         }
       };
       document.addEventListener('visibilitychange', handleVisibilityChange);
+    }
+  }
+
+  private scheduleNextPoll(delayMs?: number) {
+    if (this.pollingTimer) {
+      clearTimeout(this.pollingTimer);
+    }
+    const interval = delayMs !== undefined ? delayMs : this.currentPollIntervalMs;
+    this.pollingTimer = setTimeout(() => {
+      this.pollingTimer = null;
+      this.executePollStep();
+    }, interval);
+  }
+
+  private async executePollStep() {
+    if (this.isPollFetching) return;
+    this.isPollFetching = true;
+
+    try {
+      const baseUrl = this.getBaseUrl();
+      // High-Speed Primary: Single-roundtrip live telemetry endpoint
+      const liveRes = await fetch(`${baseUrl}/api/telemetry/live`, { signal: AbortSignal.timeout(6000) });
+      if (liveRes.ok) {
+        const liveData = await liveRes.json();
+        if (liveData.crossings && liveData.crossings.length > 0) {
+          this.onPollSuccess();
+          const payload: TelemetryPayload = {
+            type: 'TELEMETRY_UPDATE',
+            timestamp: liveData.timestamp || new Date().toISOString(),
+            metrics: liveData.metrics || INITIAL_METRICS,
+            crossings: liveData.crossings,
+            trains: Array.isArray(liveData.trains) ? liveData.trains : [],
+            activeCorridors: liveData.activeCorridors || liveData.corridors || INITIAL_CORRIDORS
+          };
+          this.notifyListeners(payload);
+          return;
+        }
+      }
+
+      // Secondary fallback: parallel requests
+      const [res, trainsRes] = await Promise.all([
+        fetch(`${baseUrl}/api/crossings`, { signal: AbortSignal.timeout(6000) }),
+        fetch(`${baseUrl}/api/trains`, { signal: AbortSignal.timeout(6000) }).catch(() => null)
+      ]);
+      if (res.ok) {
+        this.onPollSuccess();
+        const data = await res.json();
+        const trainsData = trainsRes && trainsRes.ok ? await trainsRes.json() : { trains: [] };
+
+        const payload: TelemetryPayload = {
+          type: 'TELEMETRY_UPDATE',
+          timestamp: new Date().toISOString(),
+          metrics: data.metrics || this.lastGoodPayload?.metrics || INITIAL_METRICS,
+          crossings: data.crossings || this.lastGoodPayload?.crossings || INITIAL_CROSSINGS,
+          trains: Array.isArray(trainsData.trains) ? trainsData.trains : (this.lastGoodPayload?.trains || []),
+          activeCorridors: data.corridors || this.lastGoodPayload?.activeCorridors || INITIAL_CORRIDORS
+        };
+        this.notifyListeners(payload);
+        return;
+      }
+
+      this.onPollFailure();
+    } catch (e) {
+      this.onPollFailure();
+    } finally {
+      this.isPollFetching = false;
+      this.scheduleNextPoll();
+    }
+  }
+
+  private onPollSuccess() {
+    this.consecutivePollErrors = 0;
+    this.currentPollIntervalMs = 2500;
+  }
+
+  private onPollFailure() {
+    this.consecutivePollErrors++;
+    if (!this.lastGoodPayload) {
+      this.emitLocalSimulation();
+    }
+    // Exponential backoff to avoid console spam when backend is waking up or offline
+    if (this.consecutivePollErrors >= 3) {
+      this.currentPollIntervalMs = 15000;
+    } else {
+      this.currentPollIntervalMs = 5000;
     }
   }
 
@@ -475,7 +512,7 @@ class RailwayAPIService {
         return await res.json();
       }
     } catch (e) {
-      console.warn('[apiService] Backend journey planner call failed, generating calibrated client-side route', e);
+      console.debug('[apiService] Backend journey planner not reachable, using calibrated client-side route');
     }
 
     // Calibrated client-side fallback

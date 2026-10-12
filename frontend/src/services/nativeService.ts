@@ -989,7 +989,7 @@ class NativeService {
         }
       }
     } catch (err) {
-      console.warn('[NativeService] Could not reach backend for saved places, checking local storage', err);
+      console.debug('[NativeService] Backend not reachable for saved places, using cached storage');
     }
 
     // Fallback to local storage if offline
