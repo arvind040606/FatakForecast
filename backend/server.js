@@ -137,6 +137,17 @@ let CROSSINGS = rawCrossings.map(c => {
   };
 });
 
+// Health check endpoints for Render cloud monitoring & uptime probes
+app.get(['/api/health', '/health'], (req, res) => {
+  res.status(200).json({
+    status: 'healthy',
+    timestamp: new Date().toISOString(),
+    uptime: Math.round(process.uptime()),
+    crossingsCount: CROSSINGS.length,
+    activeWsClients: wss ? wss.clients.size : 0
+  });
+});
+
 // AUTHENTIC SCHEDULED TIMETABLE BASELINE (PRESERVED AS INERT REFERENCE — NEVER INJECTED INTO LIVE RUNTIME)
 // Timetable entries are strictly reference data and never create live trains or predict crossing closures.
 const BASELINE_SCHEDULED_TRAINS = [];
