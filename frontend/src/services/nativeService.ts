@@ -232,9 +232,9 @@ class NativeService {
         return `http://${hostname}:8787`;
       }
 
-      // If hosted on Vercel, connect to Render backend
+      // If hosted on Vercel, route to same-origin APIs
       if (window.location.hostname.includes('vercel.app')) {
-        return 'https://fatakforecast-backend.onrender.com';
+        return window.location.origin;
       }
 
       // If hosted on general HTTPS
