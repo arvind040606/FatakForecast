@@ -482,6 +482,33 @@ export class TrainDetectionEngine {
 
       let closeTime, openTime, passageTime, crossBy;
 
+      // Check if crossing already has an anchored passage time for this specific approaching train
+      const isSameTrain = Boolean(
+        crossing && (
+          crossing.upcomingTrainId === train.number ||
+          crossing.associatedTrainNumber === train.number ||
+          crossing.associatedTrainId === train.id
+        )
+      );
+
+      let anchoredPassageMs = null;
+      if (isSameTrain && crossing.expectedTrainArrival) {
+        const parsed = new Date(crossing.expectedTrainArrival).getTime();
+        // Plausibility check: within last 10 minutes or future up to 4 hours
+        if (!isNaN(parsed) && parsed > now - 600000 && parsed < now + 14400000) {
+          anchoredPassageMs = parsed;
+        }
+      }
+
+      // Check for authentic schedule/delay change reported from provider (>= 2 min shift)
+      const currentDelayMin = Number(train.delayMinutes || 0);
+      const prevDelayMin = Number(crossing?.anchoredTrainDelay ?? currentDelayMin);
+      const delayShiftMs = (currentDelayMin - prevDelayMin) * 60000;
+      if (anchoredPassageMs !== null && Math.abs(delayShiftMs) >= 120000) {
+        anchoredPassageMs += delayShiftMs;
+        if (crossing) crossing.anchoredTrainDelay = currentDelayMin;
+      }
+
       if (item.isTraversing) {
         const alreadyTraversedM = (item.traversedDistanceKm || 0) * 1000;
         const alreadyTraversedSec = Math.round(alreadyTraversedM / speedMs);
@@ -489,17 +516,41 @@ export class TrainDetectionEngine {
         
         arrivalTimeSec = 0;
         distMeters = 0;
+
+        let reopenMs = null;
+        if (crossing && (crossing.predictedReopenTime || crossing.estimatedGateReopeningTime)) {
+          const parsedReopen = new Date(crossing.predictedReopenTime || crossing.estimatedGateReopeningTime).getTime();
+          if (!isNaN(parsedReopen) && parsedReopen > now) {
+            reopenMs = parsedReopen;
+          }
+        }
+        if (reopenMs === null) {
+          reopenMs = now + (remainingTraverseSec + CROSSING_DETECTION_THRESHOLDS.GATE_CLEARANCE_BUFFER_SEC) * 1000;
+        }
+
         passageTime = new Date(now);
         closeTime = new Date(now - (alreadyTraversedSec + CROSSING_DETECTION_THRESHOLDS.CLOSURE_LEAD_SEC) * 1000);
-        // Amritsar Ground Truth: Gate opens 1 to 3 minutes (nominal 2 minutes / 120s) after complete train clearance
-        openTime = new Date(now + (remainingTraverseSec + CROSSING_DETECTION_THRESHOLDS.GATE_CLEARANCE_BUFFER_SEC) * 1000);
+        openTime = new Date(reopenMs);
         crossBy = new Date(closeTime.getTime() - 60000);
       } else {
-        passageTime = new Date(now + arrivalTimeSec * 1000);
-        // Amritsar Ground Truth: Gate closes 10 to 15 minutes before train arrives (nominal 12 minutes = 720 seconds)
         const closureLeadSec = CROSSING_DETECTION_THRESHOLDS.CLOSURE_LEAD_SEC; // 720s (12 minutes)
+
+        if (anchoredPassageMs !== null) {
+          // Re-use anchored passage time so countdown remains strictly stable across polls & page refreshes!
+          passageTime = new Date(anchoredPassageMs);
+          arrivalTimeSec = Math.max(0, Math.round((anchoredPassageMs - now) / 1000));
+        } else {
+          // First observation of train approaching this crossing: establish the absolute passage anchor
+          arrivalTimeSec = Math.round(distMeters / speedMs);
+          passageTime = new Date(now + arrivalTimeSec * 1000);
+          anchoredPassageMs = passageTime.getTime();
+          if (crossing) {
+            crossing.expectedTrainArrival = passageTime.toISOString();
+            crossing.anchoredTrainDelay = currentDelayMin;
+          }
+        }
+
         closeTime = new Date(passageTime.getTime() - closureLeadSec * 1000);
-        // Amritsar Ground Truth: Gate opens 1 to 3 minutes (nominal 2 minutes = 120s) after train has passed
         openTime = new Date(passageTime.getTime() + traverseDurationSec * 1000 + CROSSING_DETECTION_THRESHOLDS.GATE_CLEARANCE_BUFFER_SEC * 1000);
         crossBy = new Date(closeTime.getTime() - 60000);
       }
@@ -640,11 +691,17 @@ export class TrainDetectionEngine {
         legacyStatus = 'PREDICTED_CLOSURE';
         predictionState = (primaryCand.isTraversing || diffMinutesFirst <= 0) ? 'PASSAGE_DETECTED' : 'BOOM_BARRIERS_LOCKED';
         countdownAvailable = true;
-        timeToNextClosureSec = 0;
-        remainingWaitSec = Math.max(1, Math.round((closureEndMs - now) / 1000));
+        let reopenTimeMs = activeBlock.closureEnd.getTime();
+        if (crossing && (crossing.predictedReopenTime || crossing.estimatedGateReopeningTime)) {
+          const prevReopenMs = new Date(crossing.predictedReopenTime || crossing.estimatedGateReopeningTime).getTime();
+          if (!isNaN(prevReopenMs) && prevReopenMs > now && prevReopenMs < now + 7200000) {
+            reopenTimeMs = prevReopenMs;
+          }
+        }
+        remainingWaitSec = Math.max(1, Math.round((reopenTimeMs - now) / 1000));
         const timeToReopenMin = Number((remainingWaitSec / 60).toFixed(1));
         estimatedGateClosingTime = activeBlock.closureStart.toISOString();
-        predictedReopenTime = activeBlock.closureEnd.toISOString();
+        predictedReopenTime = new Date(reopenTimeMs).toISOString();
         recommendation = 'DO NOT CROSS — GATE CLOSED';
 
         if (isContinuous) {

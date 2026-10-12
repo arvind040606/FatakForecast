@@ -167,7 +167,7 @@ export function formatCountdown(totalSeconds: number): {
   };
 }
 
-// In-memory stable anchor target registry
+// In-memory stable anchor target registry with sessionStorage persistence across browser reloads
 interface StableTargetEntry {
   crossingId: string;
   type: 'closure' | 'reopen';
@@ -178,27 +178,57 @@ interface StableTargetEntry {
   establishedAtMs: number;
 }
 
-const stableTargetMap = new Map<string, StableTargetEntry>();
+function initStableTargetMap(): Map<string, StableTargetEntry> {
+  const map = new Map<string, StableTargetEntry>();
+  if (typeof window !== 'undefined' && window.sessionStorage) {
+    try {
+      const data = sessionStorage.getItem('fatak_stable_targets');
+      if (data) {
+        const parsed = JSON.parse(data);
+        if (Array.isArray(parsed)) {
+          const now = Date.now();
+          parsed.forEach(([k, v]: [string, StableTargetEntry]) => {
+            if (v && v.targetEpochMs && v.targetEpochMs > now - 1800000 && v.targetEpochMs < now + 7200000) {
+              map.set(k, v);
+            }
+          });
+        }
+      }
+    } catch (e) {}
+  }
+  return map;
+}
+
+const stableTargetMap = initStableTargetMap();
+
+function persistStableTargets(): void {
+  if (typeof window !== 'undefined' && window.sessionStorage) {
+    try {
+      const arr = Array.from(stableTargetMap.entries());
+      sessionStorage.setItem('fatak_stable_targets', JSON.stringify(arr));
+    } catch (e) {}
+  }
+}
 
 export function clearStableTargets(): void {
   stableTargetMap.clear();
+  if (typeof window !== 'undefined' && window.sessionStorage) {
+    try { sessionStorage.removeItem('fatak_stable_targets'); } catch (e) {}
+  }
 }
 
 /**
  * Resolves authoritative target timestamp epoch (ms) for a crossing.
  * 
  * ROOT CAUSE FIX:
- * Prevents countdown bouncing (e.g. 00:34 <-> 00:35) caused by server-side polling jitter:
- * When a train is en-route between GPS updates, the backend server updates its current timestamp
- * on each 2.5s poll and generates a new ISO timestamp that drifts forward by ~2.5s.
- * 
- * This resolver:
+ * Prevents countdown bouncing and preserves active countdowns across page refreshes:
  * 1. Establishes the authoritative target on first detection or legitimate update.
- * 2. Filters out sub-5s polling drift, ensuring the client ticks strictly monotonically downward.
- * 3. Immediately adopts legitimate target updates when:
+ * 2. Persists target across browser tab refreshes via sessionStorage.
+ * 3. Filters out sub-15s polling drift and minor network jitter, ensuring the client ticks strictly monotonically downward.
+ * 4. Immediately adopts legitimate target updates when:
  *    - Crossing operational status changes (e.g. OPEN -> APPROACHING -> CLOSED)
  *    - Impacting train changes (trainId change)
- *    - Source prediction experiences a significant shift (>= 5000ms from RailKit update)
+ *    - Source prediction experiences a significant shift (>= 15000ms from RailKit schedule update)
  *    - The previous target has expired and a valid new future target is supplied.
  */
 export function getAuthoritativeTargetEpoch(
@@ -213,7 +243,10 @@ export function getAuthoritativeTargetEpoch(
   if (type === 'reopen') {
     const isClosed = crossing.status === 'CLOSED' || crossing.status === 'CLOSURE_REPORTED' || crossing.status === 'CLOSURE_EXPECTED';
     if (!isClosed) {
-      stableTargetMap.delete(cacheKey);
+      if (stableTargetMap.has(cacheKey)) {
+        stableTargetMap.delete(cacheKey);
+        persistStableTargets();
+      }
       return null;
     }
 
@@ -233,7 +266,10 @@ export function getAuthoritativeTargetEpoch(
     }
 
     if (rawTargetMs === null) {
-      stableTargetMap.delete(cacheKey);
+      if (stableTargetMap.has(cacheKey)) {
+        stableTargetMap.delete(cacheKey);
+        persistStableTargets();
+      }
       return null;
     }
 
@@ -248,13 +284,14 @@ export function getAuthoritativeTargetEpoch(
         lastSourceEpochMs: rawTargetMs,
         establishedAtMs: nowMs
       });
+      persistStableTargets();
       return rawTargetMs;
     }
 
-    // Check for genuine update vs server polling jitter (< 5s)
+    // Check for genuine update vs server polling jitter or refresh drift (< 15s)
     const trainChanged = existing.trainId !== (crossing.upcomingTrainId || null);
     const statusChanged = existing.status !== crossing.status;
-    const significantShift = Math.abs(rawTargetMs - existing.lastSourceEpochMs) >= 5000;
+    const significantShift = Math.abs(rawTargetMs - existing.targetEpochMs) >= 15000;
     const expiredTarget = nowMs > existing.targetEpochMs && rawTargetMs > nowMs + 1000;
 
     if (trainChanged || statusChanged || significantShift || expiredTarget) {
@@ -263,6 +300,7 @@ export function getAuthoritativeTargetEpoch(
       existing.status = crossing.status;
       existing.trainId = crossing.upcomingTrainId || null;
       existing.establishedAtMs = nowMs;
+      persistStableTargets();
     } else {
       existing.lastSourceEpochMs = rawTargetMs;
     }
@@ -273,7 +311,10 @@ export function getAuthoritativeTargetEpoch(
   // type === 'closure'
   const isClosed = crossing.status === 'CLOSED' || crossing.status === 'CLOSURE_REPORTED';
   if (isClosed) {
-    stableTargetMap.delete(cacheKey);
+    if (stableTargetMap.has(cacheKey)) {
+      stableTargetMap.delete(cacheKey);
+      persistStableTargets();
+    }
     return null;
   }
 
@@ -293,7 +334,10 @@ export function getAuthoritativeTargetEpoch(
   }
 
   if (rawTargetMs === null) {
-    stableTargetMap.delete(cacheKey);
+    if (stableTargetMap.has(cacheKey)) {
+      stableTargetMap.delete(cacheKey);
+      persistStableTargets();
+    }
     return null;
   }
 
@@ -308,13 +352,14 @@ export function getAuthoritativeTargetEpoch(
       lastSourceEpochMs: rawTargetMs,
       establishedAtMs: nowMs
     });
+    persistStableTargets();
     return rawTargetMs;
   }
 
-  // Check for genuine update vs server polling jitter (< 5s)
+  // Check for genuine update vs server polling jitter or refresh drift (< 15s)
   const trainChanged = existing.trainId !== (crossing.upcomingTrainId || null);
   const statusChanged = existing.status !== crossing.status;
-  const significantShift = Math.abs(rawTargetMs - existing.lastSourceEpochMs) >= 5000;
+  const significantShift = Math.abs(rawTargetMs - existing.targetEpochMs) >= 15000;
   const expiredTarget = nowMs > existing.targetEpochMs && rawTargetMs > nowMs + 1000;
 
   if (trainChanged || statusChanged || significantShift || expiredTarget) {
@@ -323,6 +368,7 @@ export function getAuthoritativeTargetEpoch(
     existing.status = crossing.status;
     existing.trainId = crossing.upcomingTrainId || null;
     existing.establishedAtMs = nowMs;
+    persistStableTargets();
   } else {
     existing.lastSourceEpochMs = rawTargetMs;
   }

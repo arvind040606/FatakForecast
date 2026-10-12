@@ -158,6 +158,52 @@ let CROSSINGS = rawCrossings.map(c => {
   };
 });
 
+const ANCHOR_CACHE_PATH = path.join(process.env.TEMP || '/tmp', 'fatak_crossing_anchors.json');
+
+function loadCrossingAnchors() {
+  try {
+    if (fs.existsSync(ANCHOR_CACHE_PATH)) {
+      const activeAnchors = JSON.parse(fs.readFileSync(ANCHOR_CACHE_PATH, 'utf8'));
+      const now = Date.now();
+      CROSSINGS.forEach(c => {
+        const saved = activeAnchors[c.id];
+        if (saved) {
+          const closeMs = saved.estimatedGateClosingTime ? new Date(saved.estimatedGateClosingTime).getTime() : 0;
+          const reopenMs = saved.predictedReopenTime ? new Date(saved.predictedReopenTime).getTime() : 0;
+          if ((closeMs > now - 180000 && closeMs < now + 7200000) || (reopenMs > now && reopenMs < now + 3600000)) {
+            c.upcomingTrainId = saved.upcomingTrainId;
+            c.estimatedGateClosingTime = saved.estimatedGateClosingTime;
+            c.expectedTrainArrival = saved.expectedTrainArrival;
+            c.predictedReopenTime = saved.predictedReopenTime;
+            c.anchoredTrainDelay = saved.anchoredTrainDelay;
+          }
+        }
+      });
+    }
+  } catch (e) {}
+}
+
+function saveCrossingAnchors() {
+  try {
+    const activeAnchors = {};
+    CROSSINGS.forEach(c => {
+      if (c.upcomingTrainId && (c.estimatedGateClosingTime || c.predictedReopenTime)) {
+        activeAnchors[c.id] = {
+          upcomingTrainId: c.upcomingTrainId,
+          estimatedGateClosingTime: c.estimatedGateClosingTime,
+          expectedTrainArrival: c.expectedTrainArrival,
+          predictedReopenTime: c.predictedReopenTime,
+          anchoredTrainDelay: c.anchoredTrainDelay || 0,
+          status: c.status
+        };
+      }
+    });
+    fs.writeFileSync(ANCHOR_CACHE_PATH, JSON.stringify(activeAnchors));
+  } catch (e) {}
+}
+
+loadCrossingAnchors();
+
 // Health check endpoints for Render cloud monitoring & uptime probes
 app.get(['/api/health', '/health'], (req, res) => {
   res.status(200).json({
@@ -675,6 +721,7 @@ function updateKinematics() {
     crossing.dataFreshness = evaluation.dataFreshness || 'LIVE';
   });
 
+  saveCrossingAnchors();
   broadcastTelemetry();
 }
 
