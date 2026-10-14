@@ -748,7 +748,15 @@ function updateKinematics() {
   const rkStatus = railkitService.getStatus();
   const lastSyncTime = diag.lastAggregateTimestamp || rkStatus.lastSuccessfulSync;
   const isSyncRecent = Boolean(lastSyncTime && (Date.now() - new Date(lastSyncTime).getTime() < 15 * 60 * 1000));
-  const isFeedActive = Boolean(diag.overallStatus?.startsWith('CONNECTED') || rkStatus.status === 'CONNECTED' || rkStatus.status === 'READY' || isSyncRecent);
+  const isProviderConfigured = Boolean(rkStatus.configured || railRadarService.getStatus().configured);
+  const isCircuitBreakerOpen = rkStatus.circuitBreaker?.state === 'OPEN';
+  const isFeedActive = Boolean(
+    diag.overallStatus?.startsWith('CONNECTED') || 
+    rkStatus.status === 'CONNECTED' || 
+    rkStatus.status === 'READY' || 
+    (isProviderConfigured && !isCircuitBreakerOpen) || 
+    isSyncRecent
+  );
   const isFeedFresh = isSyncRecent || isFeedActive;
   const feedContext = {
     isFeedFresh,
@@ -895,7 +903,14 @@ function calculateMetrics() {
     }
   }
 
-  const isConnected = Boolean(diag.overallStatus?.startsWith('CONNECTED') || rkStatus.status === 'CONNECTED' || rkStatus.status === 'READY');
+  const isProviderConfigured = Boolean(rkStatus.configured || railRadarService.getStatus().configured);
+  const isCircuitBreakerOpen = rkStatus.circuitBreaker?.state === 'OPEN';
+  const isConnected = Boolean(
+    diag.overallStatus?.startsWith('CONNECTED') || 
+    rkStatus.status === 'CONNECTED' || 
+    rkStatus.status === 'READY' ||
+    (isProviderConfigured && !isCircuitBreakerOpen)
+  );
   const primaryLatency = rkStatus.latencyMs || 250;
 
   return {
@@ -1241,7 +1256,15 @@ app.get(['/api/crossings/*/impacting-trains', '/api/crossing/*/impacting-trains'
   const diag = trainAggregationService.getDiagnostics();
   const rkStatus = railkitService.getStatus();
   const isSyncRecent = Boolean(diag.lastAggregateTimestamp && (Date.now() - new Date(diag.lastAggregateTimestamp).getTime() < 15 * 60 * 1000));
-  const isFeedActive = Boolean(diag.overallStatus?.startsWith('CONNECTED') || rkStatus.status === 'CONNECTED' || rkStatus.status === 'READY' || isSyncRecent);
+  const isProviderConfigured = Boolean(rkStatus.configured || railRadarService.getStatus().configured);
+  const isCircuitBreakerOpen = rkStatus.circuitBreaker?.state === 'OPEN';
+  const isFeedActive = Boolean(
+    diag.overallStatus?.startsWith('CONNECTED') || 
+    rkStatus.status === 'CONNECTED' || 
+    rkStatus.status === 'READY' || 
+    (isProviderConfigured && !isCircuitBreakerOpen) || 
+    isSyncRecent
+  );
   const feedContext = {
     isFeedFresh: isSyncRecent || isFeedActive,
     feedStatus: (isFeedActive || isSyncRecent) ? 'CONNECTED' : 'DISCONNECTED',

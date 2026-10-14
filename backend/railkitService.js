@@ -30,6 +30,13 @@ function ensureEnvLoaded() {
 }
 ensureEnvLoaded();
 
+function withTimeout(promise, ms = 6000, fallbackMessage = 'Operation timed out') {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error(fallbackMessage)), ms))
+  ]);
+}
+
 export class RailkitService {
   constructor() {
     this.apiKey = process.env.RAILKIT_API_KEY || null;
@@ -250,7 +257,7 @@ export class RailkitService {
 
         // Call trackTrainV2 directly (the official V2 endpoint)
         try {
-          rawResult = await railkit.trackTrainV2(cleanNum, dateStr);
+          rawResult = await withTimeout(railkit.trackTrainV2(cleanNum, dateStr), 6000, 'RailKit trackTrainV2 timeout');
         } catch (v2Err) {
           // If V2 throws quota, auth or client error:
           const errMsg = String(v2Err?.message || v2Err || '');
@@ -266,7 +273,7 @@ export class RailkitService {
           }
 
           // Single attempt V1 fallback only if V2 method unsupported
-          rawResult = await railkit.trackTrain(cleanNum, dateStr);
+          rawResult = await withTimeout(railkit.trackTrain(cleanNum, dateStr), 6000, 'RailKit trackTrain timeout');
         }
 
         const latency = Date.now() - startTime;
@@ -640,7 +647,7 @@ export class RailkitService {
 
       // Hub 1: Amritsar Junction (all 4 corridors radiate from ASR)
       try {
-        const asrRes = await railkit.liveAtStation('ASR', 4);
+        const asrRes = await withTimeout(railkit.liveAtStation('ASR', 4), 6000, 'RailKit liveAtStation ASR timeout');
         if (asrRes && asrRes.success && asrRes.data && Array.isArray(asrRes.data.trains)) {
           for (const t of asrRes.data.trains) {
             const num = String(t.trainNo || '').trim();
@@ -671,7 +678,7 @@ export class RailkitService {
 
       // Hub 2: Tarn Taran (captures branch line services between Khemkaran & Tarn Taran)
       try {
-        const ttoRes = await railkit.liveAtStation('TTO', 4);
+        const ttoRes = await withTimeout(railkit.liveAtStation('TTO', 4), 6000, 'RailKit liveAtStation TTO timeout');
         if (ttoRes && ttoRes.success && ttoRes.data && Array.isArray(ttoRes.data.trains)) {
           for (const t of ttoRes.data.trains) {
             const num = String(t.trainNo || '').trim();
