@@ -76,7 +76,7 @@ export async function fetchOsrmRoutes(origin, destination, viaWaypoint = null, m
     const url = `https://router.project-osrm.org/route/v1/${profile}/${coords}?overview=full&geometries=geojson&steps=true${altParam}`;
     const res = await fetch(url, {
       headers: { 'User-Agent': 'FatakForecast-Amritsar/2.5 (https://fatakforecast.in)' },
-      signal: AbortSignal.timeout(6500)
+      signal: AbortSignal.timeout(4000)
     });
 
     if (res.ok) {
@@ -305,28 +305,70 @@ export class JourneyPlanner {
       const hasUnknownDelays = evaluations.some(item => item.isDelayUnknown);
       const unknownCount = evaluations.filter(item => item.isDelayUnknown).length;
 
+      const totalDelayRange = knownDelaySec > 0
+        ? `${Math.max(1, Math.round(knownDelaySec / 60) - 1)}–${Math.round(knownDelaySec / 60) + 2} min`
+        : (hasUnknownDelays ? 'Unobserved (No Gate Sensor)' : '0 min (Clear Passage)');
+
+      const routeFreshness = evaluations.some(e => e.dataFreshness === 'LIVE')
+        ? 'LIVE'
+        : (evaluations.some(e => e.dataFreshness === 'SCHEDULED') ? 'SCHEDULED' : 'CALCULATED_BASELINE');
+
       const totalDurationSec = route.durationSeconds + knownDelaySec;
+      const totalDurationMin = Number((totalDurationSec / 60).toFixed(1));
+      const roadDurationMin = Number((route.durationSeconds / 60).toFixed(1));
+      const distanceKm = Number((route.distanceMeters / 1000).toFixed(2));
+      const crossingCount = evaluations.length;
+
+      const routeName = isFlyover
+        ? `Overbridge Bypass (${route.bypassName || 'Flyover'})`
+        : (routeIdx === 0 ? 'Direct City Corridor' : `Alternative Route ${routeIdx}`);
+
+      const tradeoff = isFlyover
+        ? `Continuous grade-separated bypass via ${route.bypassName || 'Overbridge'}. Zero gate closure risk.`
+        : (crossingCount === 0
+          ? 'Fast road corridor with zero railway track intersections.'
+          : `Intersects ${crossingCount} railway crossing(s). Delay risk: ${totalDelayRange}.`);
+
+      const reason = isFlyover
+        ? 'Recommended overbridge corridor providing uninterrupted transit over railway tracks.'
+        : (crossingCount === 0
+          ? 'Direct road corridor with no railway crossings along the path.'
+          : 'Fastest nominal driving route under prevailing road network conditions.');
 
       return {
         id: route.id || `candidate_${routeIdx}`,
+        name: routeName,
+        label: routeName,
         source: route.source,
         travelMode: mode,
         distanceMeters: route.distanceMeters,
-        distanceKm: Number((route.distanceMeters / 1000).toFixed(2)),
+        distanceKm,
         roadDurationSec: route.durationSeconds,
-        roadDurationMin: Number((route.durationSeconds / 60).toFixed(1)),
+        roadDurationMin,
+        durationMin: roadDurationMin,
         crossingDelaySec: knownDelaySec,
+        delayRange: totalDelayRange,
+        dataFreshness: routeFreshness,
         isDelayUnknown: hasUnknownDelays,
         unknownCrossingsCount: unknownCount,
         totalDurationSec,
-        totalDurationMin: Number((totalDurationSec / 60).toFixed(1)),
+        totalDurationMin,
+        totalEstimatedMin: totalDurationMin,
         estimatedArrivalTime: new Date(Date.now() + (departureOffsetSec + totalDurationSec) * 1000).toISOString(),
-        crossingsCount: evaluations.length,
+        crossingCount,
+        crossingsCount: crossingCount,
+        crossingsOnRoute: evaluations.map(e => ({
+          ...e.crossing,
+          ...e
+        })),
         crossings: evaluations,
         coordinates: route.coordinates,
         steps: route.steps || [],
         isGradeSeparatedFlyover: isFlyover,
         bypassName: route.bypassName || null,
+        comparisonBadge: isFlyover ? 'FLYOVER BYPASS' : (crossingCount === 0 ? 'ZERO FATAKS' : `${crossingCount} FATAK${crossingCount === 1 ? '' : 'S'}`),
+        tradeoffSummary: tradeoff,
+        recommendationReason: reason,
         dataConfidence: this.assessRouteConfidence(evaluations, route.source)
       };
     });
@@ -431,12 +473,14 @@ export class JourneyPlanner {
 
     return {
       success: true,
+      status: 'ok',
       origin,
       destination,
       travelMode: mode,
       departureOffsetSec,
       plannedAt: new Date().toISOString(),
       routes: evaluatedRoutes,
+      recommendedRouteId: (fatakAwareRoute || fastestRoadRoute || evaluatedRoutes[0])?.id,
       fastestRoadRoute,
       fatakAwareRoute,
       avoidFataksRoute,
@@ -664,6 +708,26 @@ export class JourneyPlanner {
         ? `CONFIRMED ${confirmedPhysicalGateState}`
         : (isDelayUnknown ? 'STATUS UNKNOWN (Unobserved)' : (c.status || 'OPEN'));
 
+      const delayRange = (delaySec && delaySec > 0)
+        ? `${Math.max(1, Math.round(delaySec / 60) - 1)}–${Math.round(delaySec / 60) + 2} min`
+        : (isDelayUnknown ? 'Unobserved (No Gate Sensor)' : '0 min (Clear Passage)');
+
+      const dataFreshness = relevantTrain ? (relevantTrain.dataState || 'LIVE') : 'CALCULATED_BASELINE';
+
+      const associatedTrain = relevantTrain ? {
+        id: relevantTrain.id || relevantTrain.number || relevantTrain.trainNumber,
+        trainNumber: relevantTrain.trainNumber || relevantTrain.number || relevantTrain.id,
+        number: relevantTrain.trainNumber || relevantTrain.number || relevantTrain.id,
+        trainName: relevantTrain.trainName || relevantTrain.name || 'Express Train',
+        name: relevantTrain.trainName || relevantTrain.name || 'Express Train',
+        status: relevantTrain.status || 'ACTIVE',
+        dataState: relevantTrain.dataState || 'LIVE',
+        speedKmH: relevantTrain.speedKmH || 0,
+        currentStationName: relevantTrain.currentStationName || null,
+        lastReportedLocation: relevantTrain.lastReportedLocation || null,
+        direction: relevantTrain.direction || 'DOWN'
+      } : null;
+
       return {
         id: c.id,
         osmId: c.osmId || c.id,
@@ -682,13 +746,18 @@ export class JourneyPlanner {
         currentStatus: c.status || 'OPEN',
         gateStatusLabel,
         isStatusEstimated: confirmedPhysicalGateState === 'UNKNOWN',
+        observedPhysicalGateState: confirmedPhysicalGateState,
         confirmedPhysicalGateState,
+        physicalSensorAvailable: false,
         observedRailwayStationEvents,
+        associatedTrain,
         estimatedTrainArrival,
         predictedGateClosure,
         predictedGateReopening,
         predictedStatusAtArrival: (delaySec && delaySec > 0) ? 'CLOSED' : (isDelayUnknown ? 'OPEN' : 'OPEN'),
         delaySec,
+        delayRange,
+        dataFreshness,
         isDelayUnknown,
         delayStatus,
         predictionConfidence,

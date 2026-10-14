@@ -94,6 +94,8 @@ export const JourneyPlannerView: React.FC<JourneyPlannerViewProps> = ({
   const [activeDestIndex, setActiveDestIndex] = useState<number>(-1);
   const originTimerRef = useRef<any>(null);
   const destTimerRef = useRef<any>(null);
+  const lastCalculatedParamsRef = useRef<string>('');
+  const prevRouteDelayRef = useRef<number>(0);
 
   // Navigation State & Turn-by-Turn Guidance
   const [isNavigating, setIsNavigating] = useState<boolean>(false);
@@ -120,6 +122,27 @@ export const JourneyPlannerView: React.FC<JourneyPlannerViewProps> = ({
     setSavedPlaces(list);
     setTravelMode(nativeService.getTravelMode());
     setActiveAlarms(nativeService.getSmartAlarms());
+
+    // Auto-populate origin from user profile or default landmark, and default destination to Amritsar Jn
+    const userProf = nativeService.getUserLocationProfile();
+    if (userProf) {
+      setNavGpsPos([userProf.lat, userProf.lng]);
+      setCustomOrigin({
+        placeId: 'user_profile_origin',
+        name: userProf.locationName || 'Present Location',
+        displayName: userProf.locationName ? `${userProf.locationName}, Amritsar` : 'Present Location, Amritsar',
+        locality: 'Amritsar',
+        lat: userProf.lat,
+        lng: userProf.lng,
+        category: 'Profile Location',
+        provider: 'User Preference'
+      });
+      setOriginId('CUSTOM_ORIGIN');
+    } else {
+      setOriginId('GOLDEN_TEMPLE');
+    }
+
+    setDestinationId('ASR_STATION');
   }, []);
 
   // Map Click Handler: Allows choosing destination or origin directly on the interactive map
@@ -164,7 +187,12 @@ export const JourneyPlannerView: React.FC<JourneyPlannerViewProps> = ({
     if (!id) return null;
     if (id === 'CUSTOM_ORIGIN' && customOrigin) return [customOrigin.lat, customOrigin.lng];
     if (id === 'CUSTOM_DEST' && customDestination) return [customDestination.lat, customDestination.lng];
-    if (id === 'CURRENT_GPS' && navGpsPos) return navGpsPos;
+    if (id === 'CURRENT_GPS') {
+      if (navGpsPos) return navGpsPos;
+      const userProf = nativeService.getUserLocationProfile();
+      if (userProf) return [userProf.lat, userProf.lng];
+      return [31.6200, 74.8765];
+    }
     const saved = savedPlaces.find(p => p.id === id);
     if (saved) return [saved.lat, saved.lng];
     const lm = AMRITSAR_LANDMARKS.find(l => l.id === id);
@@ -376,26 +404,56 @@ export const JourneyPlannerView: React.FC<JourneyPlannerViewProps> = ({
   };
 
   // Calculate Routes
-  const handleCalculateRoute = async (offsetSec: number = departureOffsetSec, mode: TravelMode = travelMode) => {
+  const handleCalculateRoute = async (offsetSec: number = departureOffsetSec, mode: TravelMode = travelMode, force: boolean = false) => {
     const origin = resolveCoordinates(originId);
     const destination = resolveCoordinates(destinationId);
 
     if (!origin || !destination) {
       setPlanResult(null);
+      lastCalculatedParamsRef.current = '';
       return;
     }
+
+    const calcKey = `${originId}_${destinationId}_${offsetSec}_${mode}_${origin[0].toFixed(4)},${origin[1].toFixed(4)}_${destination[0].toFixed(4)},${destination[1].toFixed(4)}`;
+    if (!force && lastCalculatedParamsRef.current === calcKey && planResult) {
+      return;
+    }
+    lastCalculatedParamsRef.current = calcKey;
 
     setIsPlanning(true);
     try {
       const result = await railwayApi.planJourney(origin, destination, offsetSec, mode);
       setPlanResult(result);
 
-      if (result.fatakAwareRoute) {
-        setSelectedRouteId(result.fatakAwareRoute.id);
-      } else if (result.fastestRoadRoute) {
-        setSelectedRouteId(result.fastestRoadRoute.id);
-      } else if (result.primaryRoute) {
-        setSelectedRouteId((result.primaryRoute as any).id || 'primary');
+      // Check for material route delay changes
+      const activeCandidate = result.routes?.find(r => r.id === selectedRouteId) || result.fatakAwareRoute || result.fastestRoadRoute;
+      const currentDelay = activeCandidate 
+        ? (activeCandidate.crossingDelaySec || 0) 
+        : (result.primaryRoute?.additionalDelaySec || 0);
+      const routeLabel = activeCandidate?.label || 'Active Route';
+      const totalSec = activeCandidate?.totalDurationSec || result.primaryRoute?.totalDurationSec || 1200;
+      const firstCrossing = activeCandidate?.crossings?.[0] || result.primaryRoute?.crossings?.[0];
+
+      if (prevRouteDelayRef.current > 0 && currentDelay > prevRouteDelayRef.current) {
+        nativeService.checkAndAlertRouteChange({
+          routeLabel,
+          crossingName: firstCrossing?.name,
+          previousDelaySec: prevRouteDelayRef.current,
+          newDelaySec: currentDelay,
+          currentTravelTimeSec: totalSec
+        });
+      }
+      prevRouteDelayRef.current = currentDelay;
+
+      // Preserve previously selected route if still valid
+      if (!selectedRouteId || !result.routes?.some(r => r.id === selectedRouteId)) {
+        if (result.fatakAwareRoute) {
+          setSelectedRouteId(result.fatakAwareRoute.id);
+        } else if (result.fastestRoadRoute) {
+          setSelectedRouteId(result.fastestRoadRoute.id);
+        } else if (result.primaryRoute) {
+          setSelectedRouteId((result.primaryRoute as any).id || 'primary');
+        }
       }
     } catch (err) {
       console.warn('Plan route error', err);
@@ -408,10 +466,11 @@ export const JourneyPlannerView: React.FC<JourneyPlannerViewProps> = ({
     if (originId && destinationId) {
       handleCalculateRoute(departureOffsetSec, travelMode);
     } else {
+      lastCalculatedParamsRef.current = '';
       setPlanResult(null);
       setSelectedRouteId('');
     }
-  }, [originId, destinationId, travelMode, navGpsPos]);
+  }, [originId, destinationId, travelMode, departureOffsetSec]);
 
   // Smart Commute Alarm Handlers
   const handleQuickDepartureAlert = async () => {
@@ -419,12 +478,17 @@ export const JourneyPlannerView: React.FC<JourneyPlannerViewProps> = ({
     const destName = getDestLabel();
     const waitMin = rec?.action === 'WAIT' ? Math.round(rec.recommendedDepartureOffsetSec / 60) : 10;
     const triggerTime = new Date(Date.now() + Math.max(1, waitMin) * 60 * 1000);
+    const firstCrossing = planResult?.primaryRoute?.crossings?.[0];
 
     const ok = await nativeService.scheduleNotification({
       title: `⏳ FatakForecast: Optimal Departure for ${destName}`,
       body: `Depart now at ${triggerTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}! Crossing conditions optimal to avoid fatak closures.`,
       category: 'departureReminders',
-      scheduledDate: triggerTime
+      scheduledDate: triggerTime,
+      crossingId: firstCrossing?.id,
+      crossingName: firstCrossing?.name,
+      eventSignature: `quick_dep:${destName.toLowerCase()}:${triggerTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
+      actionUrl: '/planner'
     });
 
     if (ok) {
@@ -725,8 +789,8 @@ export const JourneyPlannerView: React.FC<JourneyPlannerViewProps> = ({
           {/* Off-Route Alert Badge */}
           {isRecalculating && (
             <div style={{
-              backgroundColor: '#FFF0E7',
-              border: '1px solid #FED2C1',
+              backgroundColor: 'var(--surface-orange)',
+              border: '1px solid var(--surface-orange-border)',
               borderRadius: '8px',
               padding: '6px 12px',
               color: 'var(--accent-tangerine)',
@@ -787,7 +851,7 @@ export const JourneyPlannerView: React.FC<JourneyPlannerViewProps> = ({
           transform: 'translateX(-50%)',
           zIndex: 1200,
           width: 'min(94vw, 540px)',
-          backgroundColor: '#FFFFFF',
+          backgroundColor: 'var(--bg-surface)',
           border: '1px solid var(--border-soft)',
           borderRadius: 'var(--radius-lg)',
           padding: '10px 14px',
@@ -823,7 +887,7 @@ export const JourneyPlannerView: React.FC<JourneyPlannerViewProps> = ({
                 width: '34px',
                 height: '34px',
                 borderRadius: '50%',
-                backgroundColor: '#FAF9F5',
+                backgroundColor: 'var(--bg-secondary)',
                 border: '1px solid var(--border-soft)',
                 display: 'flex',
                 alignItems: 'center',
@@ -869,7 +933,7 @@ export const JourneyPlannerView: React.FC<JourneyPlannerViewProps> = ({
           zIndex: 1000,
           maxHeight: 'calc(100% - 24px - var(--bottom-nav-height))',
           overflowY: 'auto',
-          backgroundColor: '#FFFFFF',
+          backgroundColor: 'var(--bg-surface)',
           border: '1px solid var(--border-soft)',
           borderRadius: 'var(--radius-lg)',
           boxShadow: 'var(--shadow-lg)',
@@ -883,27 +947,27 @@ export const JourneyPlannerView: React.FC<JourneyPlannerViewProps> = ({
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
-          backgroundColor: '#FAF9F5'
+          backgroundColor: 'var(--bg-secondary)'
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: 'var(--accent-primary)' }} />
-            <span style={{ fontFamily: 'var(--font-brand)', fontSize: '14px', fontWeight: 700, color: 'var(--accent-emphasis)' }}>
+            <span style={{ fontFamily: 'var(--font-brand)', fontSize: '14px', fontWeight: 700, color: 'var(--text-primary)' }}>
               Smart Journey
             </span>
-            <span style={{ fontSize: '9.5px', fontWeight: 800, padding: '2px 7px', borderRadius: 'var(--radius-full)', backgroundColor: 'var(--surface-green)', color: 'var(--accent-primary)', border: '1px solid var(--surface-green-border)' }}>
+            <span style={{ fontSize: '9.5px', fontWeight: 800, padding: '2px 7px', borderRadius: 'var(--radius-full)', backgroundColor: 'rgba(56, 189, 248, 0.15)', color: 'var(--accent-primary)', border: '1px solid rgba(56, 189, 248, 0.3)' }}>
               AMRITSAR
             </span>
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
             {/* Travel Mode Selector */}
-            <div style={{ display: 'flex', backgroundColor: '#FFFFFF', borderRadius: 'var(--radius-sm)', padding: '2px', border: '1px solid var(--border-soft)' }}>
+            <div style={{ display: 'flex', backgroundColor: 'var(--bg-secondary)', borderRadius: 'var(--radius-sm)', padding: '2px', border: '1px solid var(--border-soft)' }}>
               <button
                 onClick={() => { setTravelMode('car'); handleCalculateRoute(departureOffsetSec, 'car'); }}
                 title="Car (28 km/h)"
                 style={{
                   backgroundColor: travelMode === 'car' ? 'var(--accent-primary)' : 'transparent',
-                  color: travelMode === 'car' ? '#FFFFFF' : 'var(--text-secondary)',
+                  color: travelMode === 'car' ? 'var(--text-on-accent)' : 'var(--text-secondary)',
                   border: 'none',
                   borderRadius: '4px',
                   padding: '4px 7px',
@@ -919,7 +983,7 @@ export const JourneyPlannerView: React.FC<JourneyPlannerViewProps> = ({
                 title="Motorcycle (32 km/h)"
                 style={{
                   backgroundColor: travelMode === 'motorcycle' ? 'var(--accent-primary)' : 'transparent',
-                  color: travelMode === 'motorcycle' ? '#FFFFFF' : 'var(--text-secondary)',
+                  color: travelMode === 'motorcycle' ? 'var(--text-on-accent)' : 'var(--text-secondary)',
                   border: 'none',
                   borderRadius: '4px',
                   padding: '4px 7px',
@@ -935,7 +999,7 @@ export const JourneyPlannerView: React.FC<JourneyPlannerViewProps> = ({
                 title="Walking (4.5 km/h)"
                 style={{
                   backgroundColor: travelMode === 'walking' ? 'var(--accent-primary)' : 'transparent',
-                  color: travelMode === 'walking' ? '#FFFFFF' : 'var(--text-secondary)',
+                  color: travelMode === 'walking' ? 'var(--text-on-accent)' : 'var(--text-secondary)',
                   border: 'none',
                   borderRadius: '4px',
                   padding: '4px 7px',
@@ -988,7 +1052,7 @@ export const JourneyPlannerView: React.FC<JourneyPlannerViewProps> = ({
                   height: '10px',
                   borderRadius: '50%',
                   backgroundColor: originId ? 'var(--accent-primary)' : 'var(--text-muted)',
-                  boxShadow: originId ? '0 0 6px rgba(23, 107, 77, 0.4)' : 'none',
+                  boxShadow: originId ? '0 0 6px rgba(56, 189, 248, 0.4)' : 'none',
                   marginLeft: '10px',
                   flexShrink: 0,
                   zIndex: 2
@@ -1001,7 +1065,7 @@ export const JourneyPlannerView: React.FC<JourneyPlannerViewProps> = ({
                       setDestSearchOpen(false);
                     }}
                     style={{
-                      backgroundColor: originId ? '#FAF9F5' : '#FFFFFF',
+                      backgroundColor: originId ? 'var(--bg-secondary)' : 'var(--bg-surface)',
                       border: `1.5px solid ${originId ? 'var(--border-soft)' : 'var(--accent-primary)'}`,
                       borderRadius: 'var(--radius-md)',
                       padding: '8px 12px',
@@ -1010,7 +1074,7 @@ export const JourneyPlannerView: React.FC<JourneyPlannerViewProps> = ({
                       alignItems: 'center',
                       justifyContent: 'space-between',
                       fontSize: '12.5px',
-                      boxShadow: !originId ? '0 0 0 2px rgba(23, 107, 77, 0.1)' : 'none'
+                      boxShadow: !originId ? '0 0 0 2px rgba(56, 189, 248, 0.15)' : 'none'
                     }}
                   >
                     <span style={{
@@ -1056,8 +1120,8 @@ export const JourneyPlannerView: React.FC<JourneyPlannerViewProps> = ({
                   disabled={gpsLoading}
                   title="Detect Live GPS Location"
                   style={{
-                    backgroundColor: originId === 'CURRENT_GPS' ? 'var(--surface-green)' : '#FAF9F5',
-                    border: `1.5px solid ${originId === 'CURRENT_GPS' ? 'var(--surface-green-border)' : 'var(--border-soft)'}`,
+                    backgroundColor: originId === 'CURRENT_GPS' ? 'rgba(56, 189, 248, 0.15)' : 'var(--bg-secondary)',
+                    border: `1.5px solid ${originId === 'CURRENT_GPS' ? 'var(--accent-primary)' : 'var(--border-soft)'}`,
                     borderRadius: 'var(--radius-md)',
                     padding: '8px 10px',
                     color: originId === 'CURRENT_GPS' ? 'var(--accent-primary)' : 'var(--text-secondary)',
@@ -1078,7 +1142,7 @@ export const JourneyPlannerView: React.FC<JourneyPlannerViewProps> = ({
               {/* Origin Search & Live GPS Drawer */}
               {originSearchOpen && (
                 <div style={{
-                  backgroundColor: '#FFFFFF',
+                  backgroundColor: 'var(--bg-surface)',
                   border: '1.5px solid var(--accent-primary)',
                   borderRadius: 'var(--radius-md)',
                   padding: '10px',
@@ -1094,8 +1158,8 @@ export const JourneyPlannerView: React.FC<JourneyPlannerViewProps> = ({
                     disabled={gpsLoading}
                     style={{
                       width: '100%',
-                      backgroundColor: 'var(--surface-green)',
-                      border: '1px solid var(--surface-green-border)',
+                      backgroundColor: 'rgba(56, 189, 248, 0.15)',
+                      border: '1px solid var(--accent-primary)',
                       color: 'var(--accent-primary)',
                       borderRadius: '6px',
                       padding: '9px 12px',
@@ -1123,7 +1187,7 @@ export const JourneyPlannerView: React.FC<JourneyPlannerViewProps> = ({
                       autoFocus
                       style={{
                         width: '100%',
-                        backgroundColor: '#FAF9F5',
+                        backgroundColor: 'var(--bg-secondary)',
                         border: '1px solid var(--border-soft)',
                         borderRadius: '6px',
                         padding: '7px 10px 7px 28px',
@@ -1164,8 +1228,8 @@ export const JourneyPlannerView: React.FC<JourneyPlannerViewProps> = ({
                               padding: '7px 9px',
                               borderRadius: '4px',
                               cursor: 'pointer',
-                              backgroundColor: isHighlighted ? 'var(--surface-green)' : '#FAF9F5',
-                              border: isHighlighted ? '1px solid var(--surface-green-border)' : '1px solid transparent',
+                              backgroundColor: isHighlighted ? 'rgba(56, 189, 248, 0.15)' : 'var(--bg-secondary)',
+                              border: isHighlighted ? '1px solid var(--accent-primary)' : '1px solid transparent',
                               display: 'flex',
                               justifyContent: 'space-between',
                               alignItems: 'center'
@@ -1176,7 +1240,7 @@ export const JourneyPlannerView: React.FC<JourneyPlannerViewProps> = ({
                               <div style={{ color: 'var(--text-muted)', fontSize: '10px' }}>{res.locality}</div>
                             </div>
                             {res.category && (
-                              <span style={{ fontSize: '9px', fontWeight: 700, padding: '2px 5px', borderRadius: '4px', backgroundColor: '#FFFFFF', color: 'var(--text-secondary)', border: '1px solid var(--border-subtle)' }}>
+                              <span style={{ fontSize: '9px', fontWeight: 700, padding: '2px 5px', borderRadius: '4px', backgroundColor: 'var(--bg-surface)', color: 'var(--text-secondary)', border: '1px solid var(--border-subtle)' }}>
                                 {res.category}
                               </span>
                             )}
@@ -1202,7 +1266,7 @@ export const JourneyPlannerView: React.FC<JourneyPlannerViewProps> = ({
                               setOriginSearchOpen(false);
                             }}
                             style={{
-                              backgroundColor: '#FAF9F5',
+                              backgroundColor: 'var(--bg-secondary)',
                               border: '1px solid var(--border-soft)',
                               borderRadius: 'var(--radius-full)',
                               padding: '3px 8px',
@@ -1227,7 +1291,7 @@ export const JourneyPlannerView: React.FC<JourneyPlannerViewProps> = ({
                   onClick={handleSwapPoints}
                   title="Swap starting point and destination"
                   style={{
-                    backgroundColor: '#FFFFFF',
+                    backgroundColor: 'var(--bg-secondary)',
                     border: '1px solid var(--border-soft)',
                     borderRadius: '50%',
                     width: '26px',
@@ -1265,7 +1329,7 @@ export const JourneyPlannerView: React.FC<JourneyPlannerViewProps> = ({
                       setOriginSearchOpen(false);
                     }}
                     style={{
-                      backgroundColor: destinationId ? '#FAF9F5' : '#FFFFFF',
+                      backgroundColor: destinationId ? 'var(--bg-secondary)' : 'var(--bg-surface)',
                       border: `1.5px solid ${destinationId ? 'var(--border-soft)' : 'var(--accent-tangerine)'}`,
                       borderRadius: 'var(--radius-md)',
                       padding: '8px 12px',
@@ -1274,7 +1338,7 @@ export const JourneyPlannerView: React.FC<JourneyPlannerViewProps> = ({
                       alignItems: 'center',
                       justifyContent: 'space-between',
                       fontSize: '12.5px',
-                      boxShadow: !destinationId ? '0 0 0 2px rgba(255, 120, 73, 0.1)' : 'none'
+                      boxShadow: !destinationId ? '0 0 0 2px rgba(255, 120, 73, 0.15)' : 'none'
                     }}
                   >
                     <span style={{
@@ -1317,7 +1381,7 @@ export const JourneyPlannerView: React.FC<JourneyPlannerViewProps> = ({
               {/* Destination Search Dropdown Drawer */}
               {destSearchOpen && (
                 <div style={{
-                  backgroundColor: '#FFFFFF',
+                  backgroundColor: 'var(--bg-surface)',
                   border: '1.5px solid var(--accent-tangerine)',
                   borderRadius: 'var(--radius-md)',
                   padding: '10px',
@@ -1337,7 +1401,7 @@ export const JourneyPlannerView: React.FC<JourneyPlannerViewProps> = ({
                       autoFocus
                       style={{
                         width: '100%',
-                        backgroundColor: '#FAF9F5',
+                        backgroundColor: 'var(--bg-secondary)',
                         border: '1px solid var(--border-soft)',
                         borderRadius: '6px',
                         padding: '7px 10px 7px 28px',
@@ -1378,7 +1442,7 @@ export const JourneyPlannerView: React.FC<JourneyPlannerViewProps> = ({
                               padding: '7px 9px',
                               borderRadius: '4px',
                               cursor: 'pointer',
-                              backgroundColor: isHighlighted ? 'var(--surface-orange)' : '#FAF9F5',
+                              backgroundColor: isHighlighted ? 'rgba(255, 120, 73, 0.15)' : 'var(--bg-secondary)',
                               border: isHighlighted ? '1px solid var(--surface-orange-border)' : '1px solid transparent',
                               display: 'flex',
                               justifyContent: 'space-between',
@@ -1390,7 +1454,7 @@ export const JourneyPlannerView: React.FC<JourneyPlannerViewProps> = ({
                               <div style={{ color: 'var(--text-muted)', fontSize: '10px' }}>{res.locality}</div>
                             </div>
                             {res.category && (
-                              <span style={{ fontSize: '9px', fontWeight: 700, padding: '2px 5px', borderRadius: '4px', backgroundColor: '#FFFFFF', color: 'var(--text-secondary)', border: '1px solid var(--border-subtle)' }}>
+                              <span style={{ fontSize: '9px', fontWeight: 700, padding: '2px 5px', borderRadius: '4px', backgroundColor: 'var(--bg-surface)', color: 'var(--text-secondary)', border: '1px solid var(--border-subtle)' }}>
                                 {res.category}
                               </span>
                             )}
@@ -1416,7 +1480,7 @@ export const JourneyPlannerView: React.FC<JourneyPlannerViewProps> = ({
                               setDestSearchOpen(false);
                             }}
                             style={{
-                              backgroundColor: '#FAF9F5',
+                              backgroundColor: 'var(--bg-secondary)',
                               border: '1px solid var(--border-soft)',
                               borderRadius: 'var(--radius-full)',
                               padding: '3px 8px',
@@ -1446,7 +1510,7 @@ export const JourneyPlannerView: React.FC<JourneyPlannerViewProps> = ({
             {/* Smart Journey Setup Assistant (Shown when locations are missing) */}
             {(!originId || !destinationId) && (
               <div style={{
-                backgroundColor: '#FAF9F5',
+                backgroundColor: 'var(--bg-secondary)',
                 border: '1.5px dashed var(--accent-primary)',
                 borderRadius: 'var(--radius-md)',
                 padding: '12px 14px',
@@ -1456,7 +1520,7 @@ export const JourneyPlannerView: React.FC<JourneyPlannerViewProps> = ({
               }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '7px' }}>
                   <Sparkles size={15} style={{ color: 'var(--accent-primary)' }} />
-                  <span style={{ fontSize: '12px', fontWeight: 800, color: 'var(--accent-emphasis)' }}>
+                  <span style={{ fontSize: '12px', fontWeight: 800, color: 'var(--text-primary)' }}>
                     SMART ROUTE SETUP
                   </span>
                 </div>
@@ -1468,7 +1532,7 @@ export const JourneyPlannerView: React.FC<JourneyPlannerViewProps> = ({
                       width: '18px',
                       height: '18px',
                       borderRadius: '50%',
-                      backgroundColor: originId ? 'var(--surface-green)' : '#FFFFFF',
+                      backgroundColor: originId ? 'rgba(56, 189, 248, 0.15)' : 'var(--bg-surface)',
                       border: `1.5px solid ${originId ? 'var(--accent-primary)' : 'var(--border-soft)'}`,
                       display: 'flex',
                       alignItems: 'center',
@@ -1505,7 +1569,7 @@ export const JourneyPlannerView: React.FC<JourneyPlannerViewProps> = ({
                       width: '18px',
                       height: '18px',
                       borderRadius: '50%',
-                      backgroundColor: destinationId ? 'var(--accent-tangerine-bg)' : '#FFFFFF',
+                      backgroundColor: destinationId ? 'rgba(255, 120, 73, 0.15)' : 'var(--bg-surface)',
                       border: `1.5px solid ${destinationId ? 'var(--accent-tangerine)' : 'var(--border-soft)'}`,
                       display: 'flex',
                       alignItems: 'center',
@@ -1574,7 +1638,7 @@ export const JourneyPlannerView: React.FC<JourneyPlannerViewProps> = ({
                 {/* INTELLIGENT RAILWAY-CROSSING AVOIDANCE CARD (Requirement 4) */}
                 {hasAvoidanceOpportunity && altRouteOption && (
                   <div style={{
-                    backgroundColor: '#FFF8F6',
+                    backgroundColor: 'var(--surface-orange)',
                     border: '1.5px solid var(--accent-tangerine)',
                     borderRadius: 'var(--radius-md)',
                     padding: '12px 14px',
@@ -1596,7 +1660,7 @@ export const JourneyPlannerView: React.FC<JourneyPlannerViewProps> = ({
                       gridTemplateColumns: '1fr 1fr',
                       gap: '8px',
                       fontSize: '11px',
-                      backgroundColor: '#FFFFFF',
+                      backgroundColor: 'var(--bg-surface)',
                       padding: '8px 10px',
                       borderRadius: '6px',
                       border: '1px solid var(--border-subtle)'
@@ -1647,8 +1711,23 @@ export const JourneyPlannerView: React.FC<JourneyPlannerViewProps> = ({
                   </div>
                 )}
 
-                <div style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.04em' }}>
-                  AVAILABLE ROUTE OPTIONS
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <div style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.04em' }}>
+                    AVAILABLE ROUTE OPTIONS
+                  </div>
+                  {activeRoute?.dataFreshness && (
+                    <span style={{
+                      fontSize: '9px',
+                      fontWeight: 800,
+                      padding: '2px 6px',
+                      borderRadius: '3px',
+                      backgroundColor: activeRoute.dataFreshness === 'LIVE' ? 'var(--status-open-bg)' : '#F3F4F6',
+                      color: activeRoute.dataFreshness === 'LIVE' ? 'var(--status-open)' : 'var(--text-secondary)',
+                      border: `1px solid ${activeRoute.dataFreshness === 'LIVE' ? 'var(--status-open-border)' : 'var(--border-subtle)'}`
+                    }}>
+                      DATA: {activeRoute.dataFreshness}
+                    </span>
+                  )}
                 </div>
 
                 {/* Option 1: FASTEST ROAD */}
@@ -1656,7 +1735,7 @@ export const JourneyPlannerView: React.FC<JourneyPlannerViewProps> = ({
                   <div
                     onClick={() => setSelectedRouteId(fastestRoute.id)}
                     style={{
-                      backgroundColor: selectedRouteId === fastestRoute.id ? '#FAF9F5' : '#FFFFFF',
+                      backgroundColor: selectedRouteId === fastestRoute.id ? 'var(--bg-surface-elevated)' : 'var(--bg-secondary)',
                       border: `1.5px solid ${selectedRouteId === fastestRoute.id ? 'var(--accent-primary)' : 'var(--border-soft)'}`,
                       borderRadius: 'var(--radius-md)',
                       padding: '10px 12px',
@@ -1665,11 +1744,18 @@ export const JourneyPlannerView: React.FC<JourneyPlannerViewProps> = ({
                     }}
                   >
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-                      <span style={{ fontSize: '10px', fontWeight: 800, color: 'var(--text-secondary)', letterSpacing: '0.05em' }}>
-                        DIRECT ROAD
-                      </span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <span style={{ fontSize: '10px', fontWeight: 800, color: 'var(--text-secondary)', letterSpacing: '0.05em' }}>
+                          DIRECT ROAD
+                        </span>
+                        {fastestRoute.dataFreshness && (
+                          <span style={{ fontSize: '8.5px', fontWeight: 700, color: 'var(--text-muted)' }}>
+                            • {fastestRoute.dataFreshness}
+                          </span>
+                        )}
+                      </div>
                       <span style={{ fontSize: '15px', fontWeight: 800, color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>
-                        {fastestRoute.roadDurationMin} min
+                        {fastestRoute.totalDurationMin || fastestRoute.roadDurationMin} min
                       </span>
                     </div>
 
@@ -1680,9 +1766,15 @@ export const JourneyPlannerView: React.FC<JourneyPlannerViewProps> = ({
                         fontWeight: 700,
                         fontSize: '10.5px'
                       }}>
-                        {fastestRoute.isDelayUnknown ? 'Delay UNCONFIRMED' : (fastestRoute.crossingDelaySec ? `+${Math.round(fastestRoute.crossingDelaySec / 60)}m delay` : 'Clear passage')}
+                        {fastestRoute.delayRange ? `Delay: ${fastestRoute.delayRange}` : (fastestRoute.isDelayUnknown ? 'Delay UNCONFIRMED' : 'Clear passage')}
                       </span>
                     </div>
+
+                    {fastestRoute.tradeoffSummary && (
+                      <div style={{ fontSize: '10.5px', color: 'var(--text-muted)', marginTop: '4px', lineHeight: 1.3 }}>
+                        {fastestRoute.tradeoffSummary}
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -1691,8 +1783,8 @@ export const JourneyPlannerView: React.FC<JourneyPlannerViewProps> = ({
                   <div
                     onClick={() => setSelectedRouteId(fatakAwareRoute.id)}
                     style={{
-                      backgroundColor: 'var(--surface-green)',
-                      border: `1.5px solid ${selectedRouteId === fatakAwareRoute.id ? 'var(--accent-primary)' : 'var(--surface-green-border)'}`,
+                      backgroundColor: selectedRouteId === fatakAwareRoute.id ? 'rgba(56, 189, 248, 0.15)' : 'var(--bg-secondary)',
+                      border: `1.5px solid ${selectedRouteId === fatakAwareRoute.id ? 'var(--accent-primary)' : 'var(--border-soft)'}`,
                       borderRadius: 'var(--radius-md)',
                       padding: '10px 12px',
                       cursor: 'pointer',
@@ -1705,17 +1797,28 @@ export const JourneyPlannerView: React.FC<JourneyPlannerViewProps> = ({
                         <span style={{ fontSize: '10px', fontWeight: 800, color: 'var(--accent-primary)', letterSpacing: '0.05em' }}>
                           FATAK-AWARE
                         </span>
-                        <span style={{ fontSize: '9px', fontWeight: 700, padding: '1px 5px', borderRadius: '3px', backgroundColor: '#FFFFFF', color: 'var(--accent-primary)', border: '1px solid var(--surface-green-border)' }}>
+                        <span style={{ fontSize: '9px', fontWeight: 700, padding: '1px 5px', borderRadius: '3px', backgroundColor: 'var(--bg-surface)', color: 'var(--accent-primary)', border: '1px solid rgba(56, 189, 248, 0.3)' }}>
                           RECOMMENDED
                         </span>
                       </div>
-                      <span style={{ fontSize: '15px', fontWeight: 800, color: 'var(--accent-emphasis)', fontVariantNumeric: 'tabular-nums' }}>
+                      <span style={{ fontSize: '15px', fontWeight: 800, color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>
                         {fatakAwareRoute.totalDurationMin} min
                       </span>
                     </div>
 
-                    <div style={{ fontSize: '11.5px', color: 'var(--text-secondary)', marginTop: '3px' }}>
-                      {fatakAwareRoute.description}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '3px', fontSize: '11.5px', color: 'var(--text-secondary)' }}>
+                      <span>{fatakAwareRoute.distanceKm} km • {fatakAwareRoute.crossingsCount} fatak{fatakAwareRoute.crossingsCount === 1 ? '' : 's'}</span>
+                      <span style={{
+                        color: fatakAwareRoute.isDelayUnknown ? 'var(--warning-amber)' : (fatakAwareRoute.crossingDelaySec ? 'var(--critical-red)' : 'var(--status-open)'),
+                        fontWeight: 700,
+                        fontSize: '10.5px'
+                      }}>
+                        {fatakAwareRoute.delayRange ? `Delay: ${fatakAwareRoute.delayRange}` : 'Clear passage'}
+                      </span>
+                    </div>
+
+                    <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '3px', lineHeight: 1.3 }}>
+                      {fatakAwareRoute.tradeoffSummary || fatakAwareRoute.description}
                     </div>
                   </div>
                 )}
@@ -1725,7 +1828,7 @@ export const JourneyPlannerView: React.FC<JourneyPlannerViewProps> = ({
                   <div
                     onClick={() => setSelectedRouteId(avoidFataksRoute.id)}
                     style={{
-                      backgroundColor: selectedRouteId === avoidFataksRoute.id ? 'var(--surface-orange)' : '#FFFFFF',
+                      backgroundColor: selectedRouteId === avoidFataksRoute.id ? 'rgba(255, 120, 73, 0.15)' : 'var(--bg-secondary)',
                       border: `1.5px solid ${selectedRouteId === avoidFataksRoute.id ? 'var(--accent-tangerine)' : 'var(--border-soft)'}`,
                       borderRadius: 'var(--radius-md)',
                       padding: '10px 12px',
@@ -1738,12 +1841,21 @@ export const JourneyPlannerView: React.FC<JourneyPlannerViewProps> = ({
                         FLYOVER / BYPASS
                       </span>
                       <span style={{ fontSize: '15px', fontWeight: 800, color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>
-                        {avoidFataksRoute.roadDurationMin} min
+                        {avoidFataksRoute.totalDurationMin || avoidFataksRoute.roadDurationMin} min
                       </span>
                     </div>
 
-                    <div style={{ fontSize: '11.5px', color: 'var(--text-secondary)', marginTop: '3px' }}>
-                      {avoidFataksRoute.isGradeSeparatedFlyover ? `Via ${avoidFataksRoute.bypassName || 'Overbridge'}` : 'Minimal Fataks Route'} • 0 barrier delay
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '3px', fontSize: '11.5px', color: 'var(--text-secondary)' }}>
+                      <span>{avoidFataksRoute.distanceKm} km • {avoidFataksRoute.crossingsCount} fatak{avoidFataksRoute.crossingsCount === 1 ? '' : 's'}</span>
+                      <span style={{ color: 'var(--status-open)', fontWeight: 700, fontSize: '10.5px' }}>
+                        0 barrier delay
+                      </span>
+                    </div>
+
+                    <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '3px', lineHeight: 1.3 }}>
+                      {avoidFataksRoute.isGradeSeparatedFlyover
+                        ? `Via ${avoidFataksRoute.bypassName || 'Overbridge'} (continuous grade-separated flow)`
+                        : (avoidFataksRoute.tradeoffSummary || 'Minimal rail intersections across road network')}
                     </div>
                   </div>
                 )}
@@ -1831,7 +1943,7 @@ export const JourneyPlannerView: React.FC<JourneyPlannerViewProps> = ({
                   <React.Fragment key={alarm.id}>
                     <div
                       style={{
-                        backgroundColor: alarm.enabled ? '#FAF9F5' : '#F3F4F6',
+                        backgroundColor: alarm.enabled ? 'var(--bg-secondary)' : 'var(--bg-surface)',
                         border: `1px solid ${alarm.enabled ? 'var(--surface-green-border)' : 'var(--border-subtle)'}`,
                         borderRadius: 'var(--radius-sm)',
                         padding: '8px 10px',
@@ -1848,7 +1960,7 @@ export const JourneyPlannerView: React.FC<JourneyPlannerViewProps> = ({
                             fontSize: '9.5px',
                             padding: '1px 5px',
                             borderRadius: '3px',
-                            backgroundColor: alarm.recurrence === 'WEEKDAYS' ? 'var(--surface-green)' : alarm.recurrence === 'WEEKENDS' ? 'var(--surface-orange)' : '#E5E7EB',
+                            backgroundColor: alarm.recurrence === 'WEEKDAYS' ? 'var(--surface-green)' : alarm.recurrence === 'WEEKENDS' ? 'var(--surface-orange)' : 'var(--bg-surface)',
                             color: alarm.recurrence === 'WEEKDAYS' ? 'var(--accent-primary)' : alarm.recurrence === 'WEEKENDS' ? 'var(--accent-tangerine)' : 'var(--text-secondary)',
                             fontWeight: 700
                           }}>
@@ -1900,7 +2012,7 @@ export const JourneyPlannerView: React.FC<JourneyPlannerViewProps> = ({
                       );
                       return (
                         <div style={{
-                          backgroundColor: '#FFFFFF',
+                          backgroundColor: 'var(--bg-surface)',
                           border: '1px solid var(--surface-green-border)',
                           borderRadius: 'var(--radius-sm)',
                           padding: '8px 10px',
@@ -1967,7 +2079,7 @@ export const JourneyPlannerView: React.FC<JourneyPlannerViewProps> = ({
                   marginTop: '4px'
                 }}
               >
-                <Play size={14} fill="#FFFFFF" />
+                <Play size={14} fill="#070b14" />
                 <span>Start Commuter Navigation</span>
               </button>
             )}
@@ -1983,7 +2095,7 @@ export const JourneyPlannerView: React.FC<JourneyPlannerViewProps> = ({
                   handleCalculateRoute(sec, travelMode);
                 }}
                 style={{
-                  backgroundColor: '#FAF9F5',
+                  backgroundColor: 'var(--bg-secondary)',
                   border: '1px solid var(--border-soft)',
                   color: 'var(--text-primary)',
                   fontSize: '11.5px',
@@ -2013,7 +2125,7 @@ export const JourneyPlannerView: React.FC<JourneyPlannerViewProps> = ({
           right: '24px',
           zIndex: 1100,
           width: 'min(92vw, 360px)',
-          backgroundColor: '#FFFFFF',
+          backgroundColor: 'var(--bg-surface)',
           border: '1px solid var(--border-soft)',
           borderRadius: 'var(--radius-lg)',
           padding: '16px 18px',

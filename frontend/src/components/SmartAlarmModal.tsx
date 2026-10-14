@@ -127,7 +127,7 @@ export const SmartAlarmModal: React.FC<SmartAlarmModalProps> = ({
         className="modal-content"
         style={{
           width: 'min(94vw, 480px)',
-          backgroundColor: '#FFFFFF',
+          backgroundColor: 'var(--bg-surface)',
           borderRadius: 'var(--radius-lg)',
           boxShadow: 'var(--shadow-xl)',
           border: '1px solid var(--border-soft)',
@@ -207,7 +207,7 @@ export const SmartAlarmModal: React.FC<SmartAlarmModalProps> = ({
 
           {/* ROUTE PREVIEW PILL */}
           <div style={{
-            backgroundColor: '#FAF9F5',
+            backgroundColor: 'var(--bg-secondary)',
             border: '1px solid var(--border-soft)',
             borderRadius: 'var(--radius-md)',
             padding: '12px 14px',
@@ -238,7 +238,7 @@ export const SmartAlarmModal: React.FC<SmartAlarmModalProps> = ({
               placeholder="e.g. Daily Office Commute"
               style={{
                 width: '100%',
-                backgroundColor: '#FAF9F5',
+                backgroundColor: 'var(--bg-secondary)',
                 border: '1px solid var(--border-soft)',
                 borderRadius: 'var(--radius-md)',
                 padding: '9px 12px',
@@ -262,14 +262,14 @@ export const SmartAlarmModal: React.FC<SmartAlarmModalProps> = ({
                 onChange={(e) => setTargetTime(e.target.value)}
                 style={{
                   flex: 1,
-                  backgroundColor: '#FAF9F5',
+                  backgroundColor: 'var(--bg-secondary)',
                   border: '1.5px solid var(--accent-primary)',
                   borderRadius: 'var(--radius-md)',
                   padding: '9px 12px',
                   fontSize: '18px',
                   fontWeight: 800,
                   fontFamily: 'var(--font-mono)',
-                  color: 'var(--accent-emphasis)',
+                  color: 'var(--text-primary)',
                   outline: 'none'
                 }}
               />
@@ -278,8 +278,8 @@ export const SmartAlarmModal: React.FC<SmartAlarmModalProps> = ({
                 onClick={handleTestAudio}
                 title="Test alarm sound"
                 style={{
-                  backgroundColor: isTestingAudio ? 'var(--accent-primary)' : '#FAF9F5',
-                  color: isTestingAudio ? '#FFFFFF' : 'var(--accent-primary)',
+                  backgroundColor: isTestingAudio ? 'var(--accent-primary)' : 'var(--bg-secondary)',
+                  color: isTestingAudio ? '#070b14' : 'var(--accent-primary)',
                   border: '1px solid var(--border-soft)',
                   borderRadius: 'var(--radius-md)',
                   padding: '9px 14px',
@@ -308,9 +308,9 @@ export const SmartAlarmModal: React.FC<SmartAlarmModalProps> = ({
                 type="button"
                 onClick={() => setRecurrence('WEEKDAYS')}
                 style={{
-                  backgroundColor: recurrence === 'WEEKDAYS' ? 'var(--surface-green)' : '#FAF9F5',
+                  backgroundColor: recurrence === 'WEEKDAYS' ? 'rgba(56, 189, 248, 0.15)' : 'var(--bg-secondary)',
                   border: `1.5px solid ${recurrence === 'WEEKDAYS' ? 'var(--accent-primary)' : 'var(--border-soft)'}`,
-                  color: recurrence === 'WEEKDAYS' ? 'var(--accent-emphasis)' : 'var(--text-primary)',
+                  color: recurrence === 'WEEKDAYS' ? 'var(--accent-primary)' : 'var(--text-primary)',
                   borderRadius: 'var(--radius-md)',
                   padding: '9px 12px',
                   cursor: 'pointer',
@@ -325,9 +325,9 @@ export const SmartAlarmModal: React.FC<SmartAlarmModalProps> = ({
                 type="button"
                 onClick={() => setRecurrence('WEEKENDS')}
                 style={{
-                  backgroundColor: recurrence === 'WEEKENDS' ? 'var(--surface-green)' : '#FAF9F5',
+                  backgroundColor: recurrence === 'WEEKENDS' ? 'rgba(56, 189, 248, 0.15)' : 'var(--bg-secondary)',
                   border: `1.5px solid ${recurrence === 'WEEKENDS' ? 'var(--accent-primary)' : 'var(--border-soft)'}`,
-                  color: recurrence === 'WEEKENDS' ? 'var(--accent-emphasis)' : 'var(--text-primary)',
+                  color: recurrence === 'WEEKENDS' ? 'var(--accent-primary)' : 'var(--text-primary)',
                   borderRadius: 'var(--radius-md)',
                   padding: '9px 12px',
                   cursor: 'pointer',
@@ -342,9 +342,9 @@ export const SmartAlarmModal: React.FC<SmartAlarmModalProps> = ({
                 type="button"
                 onClick={() => setRecurrence('DAILY')}
                 style={{
-                  backgroundColor: recurrence === 'DAILY' ? 'var(--surface-green)' : '#FAF9F5',
+                  backgroundColor: recurrence === 'DAILY' ? 'rgba(56, 189, 248, 0.15)' : 'var(--bg-secondary)',
                   border: `1.5px solid ${recurrence === 'DAILY' ? 'var(--accent-primary)' : 'var(--border-soft)'}`,
-                  color: recurrence === 'DAILY' ? 'var(--accent-emphasis)' : 'var(--text-primary)',
+                  color: recurrence === 'DAILY' ? 'var(--accent-primary)' : 'var(--text-primary)',
                   borderRadius: 'var(--radius-md)',
                   padding: '9px 12px',
                   cursor: 'pointer',
@@ -359,9 +359,9 @@ export const SmartAlarmModal: React.FC<SmartAlarmModalProps> = ({
                 type="button"
                 onClick={() => setRecurrence('ONCE')}
                 style={{
-                  backgroundColor: recurrence === 'ONCE' ? 'var(--surface-green)' : '#FAF9F5',
+                  backgroundColor: recurrence === 'ONCE' ? 'rgba(56, 189, 248, 0.15)' : 'var(--bg-secondary)',
                   border: `1.5px solid ${recurrence === 'ONCE' ? 'var(--accent-primary)' : 'var(--border-soft)'}`,
-                  color: recurrence === 'ONCE' ? 'var(--accent-emphasis)' : 'var(--text-primary)',
+                  color: recurrence === 'ONCE' ? 'var(--accent-primary)' : 'var(--text-primary)',
                   borderRadius: 'var(--radius-md)',
                   padding: '9px 12px',
                   cursor: 'pointer',
@@ -408,7 +408,7 @@ export const SmartAlarmModal: React.FC<SmartAlarmModalProps> = ({
         <div style={{
           padding: '14px 22px',
           borderTop: '1px solid var(--border-subtle)',
-          backgroundColor: '#FAF9F5',
+          backgroundColor: 'var(--bg-secondary)',
           display: 'flex',
           justifyContent: 'flex-end',
           gap: '10px'

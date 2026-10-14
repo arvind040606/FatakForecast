@@ -137,7 +137,7 @@ export const TrainScheduleModal: React.FC<TrainScheduleModalProps> = ({
           width: '100%',
           maxWidth: isMobile ? '100%' : '840px',
           height: isMobile ? '92vh' : '86vh',
-          backgroundColor: '#FFFFFF'
+          backgroundColor: 'var(--bg-surface)'
         }}
         variants={isMobile ? bottomSheetVariants : dialogVariants}
         initial="hidden"
@@ -152,7 +152,7 @@ export const TrainScheduleModal: React.FC<TrainScheduleModalProps> = ({
         <div style={{
           padding: '16px 22px',
           borderBottom: '1px solid var(--border-soft)',
-          backgroundColor: '#FAF9F5',
+          backgroundColor: 'var(--bg-secondary)',
           display: 'flex',
           alignItems: 'flex-start',
           justifyContent: 'space-between',
@@ -165,12 +165,12 @@ export const TrainScheduleModal: React.FC<TrainScheduleModalProps> = ({
                 width: '30px',
                 height: '30px',
                 borderRadius: '8px',
-                backgroundColor: 'var(--surface-green)',
+                backgroundColor: 'rgba(56, 189, 248, 0.15)',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
                 color: 'var(--accent-primary)',
-                border: '1px solid var(--surface-green-border)'
+                border: '1px solid var(--accent-primary)'
               }}>
                 <Train size={17} />
               </div>
@@ -178,7 +178,7 @@ export const TrainScheduleModal: React.FC<TrainScheduleModalProps> = ({
                 fontFamily: 'var(--font-brand)',
                 fontSize: '18px', 
                 fontWeight: 700, 
-                color: 'var(--accent-emphasis)', 
+                color: 'var(--text-primary)', 
                 margin: 0 
               }}>
                 {train.name}
@@ -187,9 +187,9 @@ export const TrainScheduleModal: React.FC<TrainScheduleModalProps> = ({
                 fontSize: '11px',
                 fontWeight: 700,
                 fontFamily: 'var(--font-mono)',
-                background: 'var(--surface-green)',
+                background: 'rgba(56, 189, 248, 0.15)',
                 color: 'var(--accent-primary)',
-                border: '1px solid var(--surface-green-border)',
+                border: '1px solid var(--accent-primary)',
                 padding: '2px 8px',
                 borderRadius: 'var(--radius-full)'
               }}>
@@ -197,9 +197,9 @@ export const TrainScheduleModal: React.FC<TrainScheduleModalProps> = ({
               </span>
               <span className="status-pill" style={{
                 fontSize: '10px',
-                background: train.dataState === 'LIVE' ? 'var(--surface-green)' : '#FAF9F5',
+                background: train.dataState === 'LIVE' ? 'var(--status-open-bg)' : 'var(--bg-surface)',
                 color: train.dataState === 'LIVE' ? 'var(--status-open)' : 'var(--text-secondary)',
-                border: `1px solid ${train.dataState === 'LIVE' ? 'var(--surface-green-border)' : 'var(--border-subtle)'}`
+                border: `1px solid ${train.dataState === 'LIVE' ? 'var(--status-open-border)' : 'var(--border-subtle)'}`
               }}>
                 {train.dataState === 'LIVE' ? 'VERIFIED TELEMETRY' : (train.dataState || 'TIMETABLE')}
               </span>
@@ -232,7 +232,7 @@ export const TrainScheduleModal: React.FC<TrainScheduleModalProps> = ({
         {/* TELEMETRY METRICS STRIP */}
         <div style={{
           padding: '10px 22px',
-          backgroundColor: '#FFFFFF',
+          backgroundColor: 'var(--bg-surface)',
           borderBottom: '1px solid var(--border-soft)',
           display: 'flex',
           flexWrap: 'wrap',
@@ -292,7 +292,7 @@ export const TrainScheduleModal: React.FC<TrainScheduleModalProps> = ({
           flexWrap: 'wrap',
           gap: '10px',
           borderBottom: '1px solid var(--border-soft)',
-          backgroundColor: '#FAF9F5',
+          backgroundColor: 'var(--bg-secondary)',
           flexShrink: 0
         }}>
           {/* SEARCH INPUT */}
@@ -305,7 +305,7 @@ export const TrainScheduleModal: React.FC<TrainScheduleModalProps> = ({
               onChange={(e) => setSearchQuery(e.target.value)}
               style={{
                 width: '100%',
-                backgroundColor: '#FFFFFF',
+                backgroundColor: 'var(--bg-surface)',
                 border: '1px solid var(--border-soft)',
                 borderRadius: 'var(--radius-md)',
                 padding: '8px 12px 8px 34px',
@@ -336,7 +336,7 @@ export const TrainScheduleModal: React.FC<TrainScheduleModalProps> = ({
         </div>
 
         {/* TIMELINE BODY */}
-        <div className="journey-timeline-wrapper" style={{ flex: 1, backgroundColor: '#FFFFFF' }}>
+        <div className="journey-timeline-wrapper" style={{ flex: 1, backgroundColor: 'var(--bg-surface)' }}>
           {loading && schedule.length === 0 ? (
             <div style={{ padding: '48px 20px', textAlign: 'center', color: 'var(--text-secondary)' }}>
               <RefreshCw size={28} color="var(--accent-primary)" className="animate-spin" style={{ margin: '0 auto 12px' }} />
@@ -413,7 +413,7 @@ export const TrainScheduleModal: React.FC<TrainScheduleModalProps> = ({
                     {/* STATION INFORMATION BLOCK */}
                     <div style={{
                       flex: 1,
-                      backgroundColor: isCurrentStation ? 'var(--surface-green)' : '#FFFFFF',
+                      backgroundColor: isCurrentStation ? 'var(--surface-green)' : 'var(--bg-secondary)',
                       border: `1px solid ${isCurrentStation ? 'var(--surface-green-border)' : 'var(--border-soft)'}`,
                       borderRadius: 'var(--radius-md)',
                       padding: '12px 16px',
@@ -447,7 +447,7 @@ export const TrainScheduleModal: React.FC<TrainScheduleModalProps> = ({
                             </span>
                           )}
                           {!stop.isHalt && (
-                            <span style={{ fontSize: '10.5px', color: 'var(--text-muted)', background: '#FAF9F5', padding: '1px 5px', borderRadius: '4px' }}>
+                            <span style={{ fontSize: '10.5px', color: 'var(--text-muted)', background: 'var(--bg-secondary)', padding: '1px 5px', borderRadius: '4px' }}>
                               Pass
                             </span>
                           )}

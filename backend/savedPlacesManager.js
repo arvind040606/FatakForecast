@@ -10,7 +10,7 @@ import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const DB_FILE = path.join(__dirname, 'saved_places_db.json');
+const DB_FILE = path.join(process.env.TEMP || '/tmp', 'saved_places_db.json');
 
 // Explicit Demo Preset Locations (Available ONLY when demoMode is explicitly active)
 export const DEMO_PRESET_PLACES = [

@@ -219,7 +219,7 @@ async function runEdgeCasesSuite() {
     lastPing: new Date().toISOString()
   };
   const evalD = engine.evaluateCrossingGateState(jauraCrossing, [demuTrain], asrJucCoords, healthyFeedContext);
-  assert(evalD.status === 'UNKNOWN', 'EDGE_D', 'Jaura Phatak is UNKNOWN when train is on different route (no in-sector JUC telemetry)');
+  assert(evalD.status === 'OPEN', 'EDGE_D', 'Jaura Phatak remains OPEN when train is on different route (no false closure association)');
   assert(evalD.upcomingTrainId === null, 'EDGE_D', 'No upcoming train association across different route');
 
   // Also check Check 6: Train originating at BGTN cannot approach crossings behind BGTN
@@ -299,7 +299,8 @@ async function runEdgeCasesSuite() {
   const candG = engine.validateTrainCandidate(terminatedTrain);
   assert(candG.isValid === false, 'EDGE_G', 'TERMINATED train rejected by candidate validator');
   const evalG = engine.evaluateCrossingGateState(jauraCrossing, [terminatedTrain], asrJucCoords, healthyFeedContext);
-  assert(evalG.status === 'UNKNOWN', 'EDGE_G', 'Crossing is UNKNOWN for terminated train');
+  assert(evalG.status === 'OPEN', 'EDGE_G', 'Crossing remains OPEN when train is terminated (not in service)');
+  assert(evalG.upcomingTrainId === null, 'EDGE_G', 'No upcoming train association for terminated train');
 
   // -------------------------------------------------------------------------
   // EDGE CASE H: A stale provider observation

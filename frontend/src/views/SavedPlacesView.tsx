@@ -1,775 +1,535 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
-  Bookmark, 
+  Star, 
   MapPin, 
-  Plus, 
-  Trash2, 
-  Edit3,
-  Home, 
-  GraduationCap, 
-  Briefcase, 
-  Compass, 
-  Navigation, 
-  Check, 
   Search, 
-  Loader2, 
-  X, 
-  AlertCircle, 
-  Sparkles, 
-  ArrowUpRight 
+  Train, 
+  Clock, 
+  ExternalLink, 
+  Compass, 
+  ArrowRight,
+  Sparkles,
+  GitFork,
+  CheckCircle2
 } from 'lucide-react';
-import { SavedPlace, SavedPlaceCategory, ActiveRoute, PlaceSearchResult } from '../types';
+import { RailwayCrossing, SectorTrain, ActiveRoute } from '../types';
 import { nativeService } from '../services/nativeService';
+import { INITIAL_CROSSINGS } from '../services/amritsarData';
+import { getCrossingTimingDetails } from '../utils/trainHelpers';
+import { useSharedTimer } from '../utils/timerManager';
+import { haversineDistanceMeters, formatDistance } from '../utils/geoUtils';
 
 interface SavedPlacesViewProps {
   onNavigate: (route: ActiveRoute) => void;
-  onSelectDestination?: (place: SavedPlace) => void;
+  crossings?: RailwayCrossing[];
+  trains?: SectorTrain[];
+  onSelectCrossing?: (crossing: RailwayCrossing) => void;
+  onSelectDestination?: (place: any) => void;
 }
 
 export const SavedPlacesView: React.FC<SavedPlacesViewProps> = ({
   onNavigate,
-  onSelectDestination
+  crossings = INITIAL_CROSSINGS,
+  trains = [],
+  onSelectCrossing
 }) => {
-  const [places, setPlaces] = useState<SavedPlace[]>([]);
-  const [isAdding, setIsAdding] = useState<boolean>(false);
-  const [editingPlaceId, setEditingPlaceId] = useState<string | null>(null);
-
-  // Form Fields
-  const [formName, setFormName] = useState<string>('');
-  const [formCategory, setFormCategory] = useState<SavedPlaceCategory>('CUSTOM');
-  const [formAddress, setFormAddress] = useState<string>('');
-  const [formLat, setFormLat] = useState<string>('');
-  const [formLng, setFormLng] = useState<string>('');
-
-  // Live Geocoding Search State
+  const [favCrossingIds, setFavCrossingIds] = useState<string[]>(() => nativeService.getFavoriteCrossingIds());
+  const [userCoords, setUserCoords] = useState<{ lat: number; lng: number } | null>(() => {
+    const prof = nativeService.getUserLocationProfile();
+    return prof ? { lat: prof.lat, lng: prof.lng } : null;
+  });
   const [searchQuery, setSearchQuery] = useState<string>('');
-  const [searchResults, setSearchResults] = useState<PlaceSearchResult[]>([]);
-  const [isSearching, setIsSearching] = useState<boolean>(false);
-  const [searchError, setSearchError] = useState<string | null>(null);
-  const searchTimeoutRef = useRef<any>(null);
+  const [sortBy, setSortBy] = useState<'distance' | 'status' | 'name'>('distance');
 
-  // GPS State
-  const [gpsLoading, setGpsLoading] = useState<boolean>(false);
-
-  // UI Feedback
-  const [notificationMsg, setNotificationMsg] = useState<{ text: string; type: 'success' | 'info' | 'error' } | null>(null);
-  const [demoActive, setDemoActive] = useState<boolean>(false);
+  // Synchronized 1-second timer tick for live second-by-second countdown updates
+  const now = useSharedTimer();
 
   useEffect(() => {
-    loadPlaces();
+    const handleFavUpdated = (e: any) => {
+      setFavCrossingIds(e.detail || nativeService.getFavoriteCrossingIds());
+    };
+    window.addEventListener('fatak:favorite-crossings-updated', handleFavUpdated);
+
+    // Refresh user GPS location
+    nativeService.getCurrentPosition().then(pos => {
+      if (pos) setUserCoords({ lat: pos.lat, lng: pos.lng });
+    });
+
+    return () => {
+      window.removeEventListener('fatak:favorite-crossings-updated', handleFavUpdated);
+    };
   }, []);
 
-  const showToast = (text: string, type: 'success' | 'info' | 'error' = 'success') => {
-    setNotificationMsg({ text, type });
-    setTimeout(() => setNotificationMsg(null), 3500);
+  const handleToggleFavorite = async (crossingId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    await nativeService.toggleFavoriteCrossing(crossingId);
+    setFavCrossingIds(nativeService.getFavoriteCrossingIds());
   };
 
-  const loadPlaces = async () => {
-    const list = await nativeService.refreshSavedPlacesFromServer();
-    setPlaces(list);
-    setDemoActive(nativeService.isDemoMode());
+  const getCrossingDistanceMeters = (crossing: RailwayCrossing): number | null => {
+    if (!userCoords) return null;
+    return haversineDistanceMeters(userCoords.lat, userCoords.lng, crossing.lat, crossing.lng);
   };
 
-  // Debounced Place Search (OSM Nominatim via Backend Proxy)
-  const handleSearchChange = (query: string) => {
-    setSearchQuery(query);
-    setSearchError(null);
+  // Filter only starred / favorite crossings
+  const favoriteCrossings = crossings.filter(c => favCrossingIds.includes(c.id));
 
-    if (searchTimeoutRef.current) {
-      clearTimeout(searchTimeoutRef.current);
+  // Filter by search query
+  const filteredCrossings = favoriteCrossings.filter(c => {
+    if (!searchQuery.trim()) return true;
+    const q = searchQuery.toLowerCase();
+    const idFormatted = c.id.replace('osm/node/', 'asr-').toLowerCase();
+    return (
+      c.name.toLowerCase().includes(q) ||
+      (c.punjabiName && c.punjabiName.toLowerCase().includes(q)) ||
+      (c.locality && c.locality.toLowerCase().includes(q)) ||
+      idFormatted.includes(q)
+    );
+  });
+
+  // Sort
+  const sortedCrossings = [...filteredCrossings].sort((a, b) => {
+    if (sortBy === 'distance') {
+      const distA = getCrossingDistanceMeters(a) ?? Infinity;
+      const distB = getCrossingDistanceMeters(b) ?? Infinity;
+      return distA - distB;
     }
-
-    if (query.trim().length < 2) {
-      setSearchResults([]);
-      setIsSearching(false);
-      return;
+    if (sortBy === 'status') {
+      const order: Record<string, number> = {
+        'CLOSED': 1,
+        'CLOSURE_REPORTED': 1,
+        'CLOSURE_EXPECTED': 2,
+        'APPROACHING': 3,
+        'UNKNOWN': 4,
+        'OPEN': 5
+      };
+      return (order[a.status] || 99) - (order[b.status] || 99);
     }
-
-    setIsSearching(true);
-    searchTimeoutRef.current = setTimeout(async () => {
-      try {
-        const results = await nativeService.searchPlaces(query.trim(), 6);
-        setSearchResults(results);
-        if (results.length === 0) {
-          setSearchError(`No locations found matching "${query.trim()}". Try searching for a known road or area.`);
-        }
-      } catch (err: any) {
-        setSearchError('Live geocoding search failed. Check network connection.');
-      } finally {
-        setIsSearching(false);
-      }
-    }, 450);
-  };
-
-  // Populate Form from Live Search Result
-  const handleSelectSearchResult = (result: PlaceSearchResult) => {
-    setFormName(result.name);
-    setFormAddress(result.locality || result.displayName);
-    setFormLat(result.lat.toFixed(6));
-    setFormLng(result.lng.toFixed(6));
-    setSearchResults([]);
-    setSearchQuery('');
-    nativeService.triggerHaptic('light');
-    showToast(`Loaded "${result.name}" from OpenStreetMap geocoding`, 'info');
-  };
-
-  // Acquire Live GPS and Reverse Geocode
-  const handleUseGps = async () => {
-    setGpsLoading(true);
-    try {
-      const pos = await nativeService.getCurrentPosition();
-      if (pos) {
-        setFormLat(pos.lat.toFixed(6));
-        setFormLng(pos.lng.toFixed(6));
-
-        // Attempt reverse geocoding to retrieve actual street name
-        const rev = await nativeService.reverseGeocode(pos.lat, pos.lng);
-        if (rev) {
-          if (!formName) setFormName(rev.name || 'My Current Location');
-          setFormAddress(rev.locality || rev.displayName);
-        } else {
-          if (!formName) setFormName('Current Location');
-        }
-
-        nativeService.triggerHaptic('success');
-        showToast('Acquired live GPS coordinates and street address', 'success');
-      } else {
-        showToast('Could not acquire GPS position. Check location permissions.', 'error');
-      }
-    } catch (err) {
-      showToast('GPS acquisition failed', 'error');
-    } finally {
-      setGpsLoading(false);
-    }
-  };
-
-  // Start Adding a New Place
-  const handleStartAdd = () => {
-    setEditingPlaceId(null);
-    setFormName('');
-    setFormCategory('CUSTOM');
-    setFormAddress('');
-    setFormLat('');
-    setFormLng('');
-    setSearchQuery('');
-    setSearchResults([]);
-    setIsAdding(true);
-  };
-
-  // Start Editing an Existing Place
-  const handleStartEdit = (place: SavedPlace) => {
-    setEditingPlaceId(place.id);
-    setFormName(place.name);
-    setFormCategory(place.category);
-    setFormAddress(place.address || '');
-    setFormLat(place.lat.toString());
-    setFormLng(place.lng.toString());
-    setSearchQuery('');
-    setSearchResults([]);
-    setIsAdding(true);
-  };
-
-  // Save / Update Form Submission
-  const handleSubmitForm = async (e: React.FormEvent) => {
-    e.preventDefault();
-
-    const latNum = parseFloat(formLat);
-    const lngNum = parseFloat(formLng);
-
-    if (isNaN(latNum) || isNaN(lngNum) || latNum < -90 || latNum > 90 || lngNum < -180 || lngNum > 180) {
-      showToast('Please enter valid GPS coordinates (Latitude: -90 to 90, Longitude: -180 to 180)', 'error');
-      return;
-    }
-
-    if (!formName.trim()) {
-      showToast('Location name is required', 'error');
-      return;
-    }
-
-    if (editingPlaceId) {
-      const updated = await nativeService.updateSavedPlace(editingPlaceId, {
-        name: formName.trim(),
-        category: formCategory,
-        address: formAddress.trim() || undefined,
-        lat: latNum,
-        lng: lngNum
-      });
-      if (updated) {
-        showToast(`Updated "${formName}"`, 'success');
-      }
-    } else {
-      const created = await nativeService.addSavedPlace({
-        name: formName.trim(),
-        category: formCategory,
-        address: formAddress.trim() || undefined,
-        lat: latNum,
-        lng: lngNum
-      });
-      if (created) {
-        showToast(`Added "${formName}" to your saved destinations`, 'success');
-      }
-    }
-
-    setIsAdding(false);
-    setEditingPlaceId(null);
-    nativeService.triggerHaptic('success');
-    await loadPlaces();
-  };
-
-  // Delete Place
-  const handleDeletePlace = async (id: string, name: string) => {
-    if (window.confirm(`Delete "${name}" from saved places?`)) {
-      await nativeService.deleteSavedPlace(id);
-      showToast(`Removed "${name}"`, 'info');
-      nativeService.triggerHaptic('light');
-      await loadPlaces();
-    }
-  };
-
-  // Quick Action: Route As Origin
-  const handleUseAsOrigin = (place: SavedPlace) => {
-    nativeService.setActivePlannerOrigin(place);
-    nativeService.triggerHaptic('light');
-    showToast(`Set "${place.name}" as journey origin`, 'info');
-    onNavigate('/planner');
-  };
-
-  // Quick Action: Route As Destination
-  const handleUseAsDestination = (place: SavedPlace) => {
-    nativeService.setActivePlannerDestination(place);
-    if (onSelectDestination) {
-      onSelectDestination(place);
-    }
-    nativeService.triggerHaptic('light');
-    showToast(`Set "${place.name}" as arrival destination`, 'info');
-    onNavigate('/planner');
-  };
-
-  // Demo Places Toggle
-  const handleLoadDemoPlaces = async () => {
-    await nativeService.loadDemoPlaces();
-    nativeService.triggerHaptic('medium');
-    showToast('Loaded 3 Amritsar demo simulation places', 'info');
-    await loadPlaces();
-  };
-
-  const handleClearDemoPlaces = async () => {
-    await nativeService.removeAllDemoPlaces();
-    nativeService.triggerHaptic('medium');
-    showToast('Removed demo simulation places', 'info');
-    await loadPlaces();
-  };
-
-  const getCategoryIcon = (category: SavedPlaceCategory) => {
-    switch (category) {
-      case 'HOME': return <Home size={16} style={{ color: 'var(--color-primary-forest)' }} />;
-      case 'COLLEGE': return <GraduationCap size={16} style={{ color: 'var(--color-accent-tangerine)' }} />;
-      case 'WORK': return <Briefcase size={16} style={{ color: 'var(--color-primary-dark)' }} />;
-      default: return <MapPin size={16} style={{ color: 'var(--color-primary-forest)' }} />;
-    }
-  };
-
-  const getCategoryBadgeClass = (category: SavedPlaceCategory) => {
-    switch (category) {
-      case 'HOME': return 'badge-green';
-      case 'COLLEGE': return 'badge-amber';
-      case 'WORK': return 'badge-green';
-      default: return 'badge-neutral';
-    }
-  };
+    return a.name.localeCompare(b.name);
+  });
 
   return (
-    <div className="page-container" style={{ paddingBottom: '90px' }}>
-      {/* HEADER */}
-      <div className="page-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px' }}>
+    <div className="view-container" style={{ padding: '20px 16px', maxWidth: '1200px', margin: '0 auto' }}>
+      {/* PAGE HEADER */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px', flexWrap: 'wrap', gap: '12px' }}>
         <div>
-          <h1 className="page-title">Saved Places</h1>
-          <p className="page-subtitle">
-            Manage your personal transit destinations with live geocoding & route shortcuts
-          </p>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <div style={{
+              width: '38px',
+              height: '38px',
+              borderRadius: '10px',
+              backgroundColor: 'rgba(245, 158, 11, 0.14)',
+              border: '1px solid rgba(245, 158, 11, 0.3)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center'
+            }}>
+              <Star size={20} fill="#f59e0b" color="#f59e0b" />
+            </div>
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <h1 style={{ fontFamily: 'var(--font-brand)', fontSize: '20px', fontWeight: 800, margin: 0, color: 'var(--text-primary)' }}>
+                  Saved Crossings
+                </h1>
+                <span style={{
+                  fontSize: '11px',
+                  fontWeight: 700,
+                  backgroundColor: 'rgba(245, 158, 11, 0.15)',
+                  color: '#f59e0b',
+                  border: '1px solid rgba(245, 158, 11, 0.3)',
+                  padding: '2px 8px',
+                  borderRadius: 'var(--radius-full)'
+                }}>
+                  {favoriteCrossings.length} Starred
+                </span>
+              </div>
+              <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                ਸੰਭਾਲੇ ਹੋਏ ਫਾਟਕ • Live closure countdowns, permanent-way train status, and approach alerts
+              </div>
+            </div>
+          </div>
         </div>
 
-        <div style={{ display: 'flex', gap: '8px' }}>
-          {demoActive && (
-            <button
-              onClick={handleClearDemoPlaces}
-              className="btn btn-secondary"
-              style={{ fontSize: '12px', padding: '8px 12px', color: 'var(--color-accent-tangerine)' }}
-              title="Remove sample demo places"
-            >
-              <span>Clear Demo</span>
-            </button>
-          )}
-
-          <button 
-            onClick={isAdding ? () => setIsAdding(false) : handleStartAdd}
-            className="btn btn-primary"
-            style={{ fontSize: '13px' }}
-          >
-            {isAdding ? <X size={15} /> : <Plus size={15} />}
-            <span>{isAdding ? 'Cancel' : 'Add Place'}</span>
-          </button>
-        </div>
+        <button
+          onClick={() => onNavigate('/crossings')}
+          className="btn btn-secondary"
+          style={{ fontSize: '12.5px', padding: '8px 14px', display: 'flex', alignItems: 'center', gap: '6px' }}
+        >
+          <GitFork size={14} />
+          <span>Browse All Fataks</span>
+        </button>
       </div>
 
-      {/* TOAST / NOTIFICATION */}
-      {notificationMsg && (
+      {/* FILTER & SEARCH BAR (Visible when user has saved crossings) */}
+      {favoriteCrossings.length > 0 && (
         <div style={{
-          background: notificationMsg.type === 'error' ? 'var(--surface-red)' : notificationMsg.type === 'info' ? 'var(--surface-green)' : 'var(--surface-green)',
-          border: `1px solid ${notificationMsg.type === 'error' ? 'var(--status-critical)' : 'var(--border-soft)'}`,
-          color: notificationMsg.type === 'error' ? 'var(--status-critical)' : 'var(--color-primary-forest)',
-          padding: '10px 16px',
-          borderRadius: '8px',
-          marginBottom: '16px',
-          display: 'flex',
-          alignItems: 'center',
-          gap: '8px',
-          fontSize: '12px',
-          fontWeight: 600
-        }}>
-          {notificationMsg.type === 'error' ? <AlertCircle size={15} /> : <Check size={15} />}
-          <span>{notificationMsg.text}</span>
-        </div>
-      )}
-
-      {/* DEMO MODE NOTICE BANNER */}
-      {demoActive && (
-        <div style={{
-          background: 'var(--surface-orange)',
-          border: '1px solid var(--border-soft)',
-          borderRadius: '8px',
-          padding: '10px 14px',
-          marginBottom: '16px',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
-          fontSize: '12px',
-          color: 'var(--color-accent-tangerine)'
+          gap: '12px',
+          marginBottom: '20px',
+          flexWrap: 'wrap'
         }}>
+          {/* Search */}
+          <div style={{ position: 'relative', flex: 1, minWidth: '220px' }}>
+            <Search size={15} color="var(--text-muted)" style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }} />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search your saved crossings..."
+              style={{
+                width: '100%',
+                backgroundColor: 'var(--bg-secondary)',
+                border: '1px solid var(--border-panel)',
+                borderRadius: 'var(--radius-md)',
+                padding: '9px 12px 9px 34px',
+                color: 'var(--text-primary)',
+                fontSize: '13px'
+              }}
+            />
+          </div>
+
+          {/* Sort By */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <Sparkles size={14} />
-            <span><strong>Demo Mode Active:</strong> Sample Amritsar locations populated for testing.</span>
+            <span style={{ fontSize: '12px', color: 'var(--text-muted)', fontWeight: 600 }}>Sort:</span>
+            <select
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value as any)}
+              style={{
+                backgroundColor: 'var(--bg-secondary)',
+                border: '1px solid var(--border-panel)',
+                borderRadius: 'var(--radius-md)',
+                padding: '8px 12px',
+                color: 'var(--text-primary)',
+                fontSize: '12.5px',
+                fontWeight: 600,
+                cursor: 'pointer'
+              }}
+            >
+              <option value="distance">Nearest to You (GPS)</option>
+              <option value="status">Closure Status</option>
+              <option value="name">Alphabetical</option>
+            </select>
           </div>
-          <button 
-            onClick={handleClearDemoPlaces}
-            style={{
-              background: 'none',
-              border: 'none',
-              color: 'var(--color-primary-forest)',
-              cursor: 'pointer',
-              textDecoration: 'underline',
-              fontSize: '11px',
-              fontWeight: 600
-            }}
-          >
-            Clear Records
-          </button>
         </div>
       )}
 
-      {/* ADD / EDIT PLACE FORM */}
-      {isAdding && (
-        <div className="card" style={{ padding: '20px', marginBottom: '24px', border: '1px solid var(--color-primary-forest)' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-            <h3 style={{ fontSize: '15px', fontWeight: 700, margin: 0, color: 'var(--color-primary-dark)' }}>
-              {editingPlaceId ? 'Edit Saved Place' : 'Add New Saved Place'}
-            </h3>
-            <span style={{ fontSize: '11px', color: 'var(--color-primary-forest)', fontWeight: 600 }}>
-              Live OpenStreetMap Geocoding
-            </span>
-          </div>
-
-          {/* LIVE PLACE SEARCH BAR */}
-          <div style={{ marginBottom: '18px', position: 'relative' }}>
-            <label style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: 700, display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>
-              Search Place / Address (OpenStreetMap Nominatim)
-            </label>
-            <div style={{ position: 'relative' }}>
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => handleSearchChange(e.target.value)}
-                placeholder="Type road, landmark, or area (e.g. Lawrence Road, Mall Road, Chheharta)..."
-                style={{
-                  width: '100%',
-                  background: 'var(--bg-card)',
-                  border: '1px solid var(--border-soft)',
-                  borderRadius: '8px',
-                  padding: '10px 38px 10px 36px',
-                  color: 'var(--text-primary)',
-                  fontSize: '13px'
-                }}
-              />
-              <Search size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)' }} />
-              {isSearching && (
-                <Loader2 size={16} className="animate-spin" style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--color-primary-forest)' }} />
-              )}
-            </div>
-
-            {/* LIVE SEARCH RESULTS DROPDOWN */}
-            {searchResults.length > 0 && (
-              <div style={{
-                position: 'absolute',
-                top: '100%',
-                left: 0,
-                right: 0,
-                zIndex: 50,
-                background: 'var(--bg-card)',
-                border: '1px solid var(--border-soft)',
-                borderRadius: '8px',
-                marginTop: '4px',
-                maxHeight: '260px',
-                overflowY: 'auto',
-                boxShadow: '0 8px 24px rgba(0,0,0,0.08)'
-              }}>
-                <div style={{ padding: '8px 12px', fontSize: '10px', color: 'var(--text-secondary)', borderBottom: '1px solid var(--border-soft)', fontWeight: 600 }}>
-                  REAL SEARCH RESULTS (CLICK TO FILL COORDINATES):
-                </div>
-                {searchResults.map((res) => (
-                  <div
-                    key={res.placeId}
-                    onClick={() => handleSelectSearchResult(res)}
-                    style={{
-                      padding: '10px 12px',
-                      borderBottom: '1px solid var(--border-soft)',
-                      cursor: 'pointer',
-                      transition: 'background 0.15s ease'
-                    }}
-                    onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--surface-green)')}
-                    onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                      <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>{res.name}</span>
-                      <span style={{ fontSize: '10px', color: 'var(--color-primary-forest)', fontFamily: 'var(--font-mono)' }}>
-                        {res.lat.toFixed(4)}, {res.lng.toFixed(4)}
-                      </span>
-                    </div>
-                    <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '2px' }}>
-                      {res.locality || res.displayName}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {searchError && (
-              <div style={{ fontSize: '11px', color: 'var(--status-warning)', marginTop: '6px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <AlertCircle size={12} />
-                <span>{searchError}</span>
-              </div>
-            )}
-          </div>
-
-          {/* FORM FIELDS */}
-          <form onSubmit={handleSubmitForm}>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px', marginBottom: '16px' }}>
-              <div>
-                <label style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: 700, display: 'block', marginBottom: '6px' }}>
-                  LOCATION NAME *
-                </label>
-                <input 
-                  type="text" 
-                  value={formName} 
-                  onChange={(e) => setFormName(e.target.value)}
-                  placeholder="e.g. My Apartment, Office, University Campus"
-                  required
-                  style={{
-                    width: '100%',
-                    background: 'var(--bg-card)',
-                    border: '1px solid var(--border-soft)',
-                    borderRadius: '8px',
-                    padding: '9px 12px',
-                    color: 'var(--text-primary)',
-                    fontSize: '13px'
-                  }}
-                />
-              </div>
-
-              <div>
-                <label style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: 700, display: 'block', marginBottom: '6px' }}>
-                  CATEGORY
-                </label>
-                <select
-                  value={formCategory}
-                  onChange={(e) => setFormCategory(e.target.value as SavedPlaceCategory)}
-                  style={{
-                    width: '100%',
-                    background: 'var(--bg-card)',
-                    border: '1px solid var(--border-soft)',
-                    borderRadius: '8px',
-                    padding: '9px 12px',
-                    color: 'var(--text-primary)',
-                    fontSize: '13px'
-                  }}
-                >
-                  <option value="HOME">Home</option>
-                  <option value="COLLEGE">College / University</option>
-                  <option value="WORK">Work / Office</option>
-                  <option value="CUSTOM">Custom Destination</option>
-                </select>
-              </div>
-
-              <div style={{ gridColumn: 'span 2' }}>
-                <label style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: 700, display: 'block', marginBottom: '6px' }}>
-                  STREET ADDRESS / NOTES
-                </label>
-                <input 
-                  type="text" 
-                  value={formAddress} 
-                  onChange={(e) => setFormAddress(e.target.value)}
-                  placeholder="e.g. GT Road, Near Putlighar Market"
-                  style={{
-                    width: '100%',
-                    background: 'var(--bg-card)',
-                    border: '1px solid var(--border-soft)',
-                    borderRadius: '8px',
-                    padding: '9px 12px',
-                    color: 'var(--text-primary)',
-                    fontSize: '13px'
-                  }}
-                />
-              </div>
-
-              <div style={{ gridColumn: 'span 2' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-                  <label style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: 700 }}>
-                    COORDINATES (LATITUDE, LONGITUDE) *
-                  </label>
-                  <button
-                    type="button"
-                    onClick={handleUseGps}
-                    disabled={gpsLoading}
-                    style={{
-                      background: 'none',
-                      border: 'none',
-                      color: 'var(--color-primary-forest)',
-                      fontSize: '11px',
-                      cursor: 'pointer',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '4px',
-                      fontWeight: 600
-                    }}
-                  >
-                    <Compass size={13} className={gpsLoading ? 'animate-spin' : ''} />
-                    <span>{gpsLoading ? 'Acquiring GPS...' : 'Use Current Device GPS'}</span>
-                  </button>
-                </div>
-
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-                  <div>
-                    <input 
-                      type="text" 
-                      value={formLat} 
-                      onChange={(e) => setFormLat(e.target.value)}
-                      placeholder="Latitude (e.g. 31.6338)"
-                      required
-                      style={{
-                        width: '100%',
-                        background: 'var(--bg-card)',
-                        border: '1px solid var(--border-soft)',
-                        borderRadius: '8px',
-                        padding: '9px 12px',
-                        color: 'var(--text-primary)',
-                        fontSize: '12px',
-                        fontFamily: 'var(--font-mono)'
-                      }}
-                    />
-                  </div>
-                  <div>
-                    <input 
-                      type="text" 
-                      value={formLng} 
-                      onChange={(e) => setFormLng(e.target.value)}
-                      placeholder="Longitude (e.g. 74.8655)"
-                      required
-                      style={{
-                        width: '100%',
-                        background: 'var(--bg-card)',
-                        border: '1px solid var(--border-soft)',
-                        borderRadius: '8px',
-                        padding: '9px 12px',
-                        color: 'var(--text-primary)',
-                        fontSize: '12px',
-                        fontFamily: 'var(--font-mono)'
-                      }}
-                    />
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div style={{ display: 'flex', gap: '10px', marginTop: '16px' }}>
-              <button type="submit" className="btn btn-primary" style={{ padding: '8px 18px', fontSize: '13px' }}>
-                <Check size={14} />
-                <span>{editingPlaceId ? 'Update Place' : 'Save Place'}</span>
-              </button>
-              <button 
-                type="button" 
-                onClick={() => { setIsAdding(false); setEditingPlaceId(null); }} 
-                className="btn btn-secondary"
-                style={{ padding: '8px 16px', fontSize: '13px' }}
-              >
-                Cancel
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
-
-      {/* SAVED PLACES LIST OR EMPTY STATE */}
-      {places.length === 0 && !isAdding ? (
-        <div className="card" style={{ padding: '36px 24px', textAlign: 'center', maxWidth: '520px', margin: '30px auto' }}>
+      {/* EMPTY STATE */}
+      {favoriteCrossings.length === 0 ? (
+        <div className="panel" style={{
+          padding: '48px 24px',
+          textAlign: 'center',
+          maxWidth: '540px',
+          margin: '32px auto',
+          borderRadius: 'var(--radius-lg)',
+          border: '1px dashed var(--border-panel)'
+        }}>
           <div style={{
-            width: '56px',
-            height: '56px',
+            width: '64px',
+            height: '64px',
             borderRadius: '50%',
-            background: 'var(--surface-green)',
-            border: '1px solid var(--border-soft)',
+            backgroundColor: 'rgba(245, 158, 11, 0.12)',
+            border: '1px solid rgba(245, 158, 11, 0.25)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
             margin: '0 auto 16px auto',
-            color: 'var(--color-primary-forest)'
+            color: '#f59e0b'
           }}>
-            <Bookmark size={26} />
+            <Star size={30} fill="#f59e0b" />
           </div>
 
-          <h3 style={{ fontSize: '17px', fontWeight: 700, margin: '0 0 8px 0', color: 'var(--color-primary-dark)' }}>
-            No Saved Places Yet
-          </h3>
+          <h2 style={{ fontSize: '18px', fontWeight: 800, margin: '0 0 8px 0', color: 'var(--text-primary)', fontFamily: 'var(--font-brand)' }}>
+            No Saved Crossings Yet
+          </h2>
 
-          <p style={{ fontSize: '13px', color: 'var(--text-secondary)', lineHeight: '1.5', margin: '0 0 20px 0' }}>
-            Save your frequent destinations (Home, College, Work) 
-            to get 1-tap route calculation, flyover bypass recommendations, and crossing gate alerts.
+          <p style={{ fontSize: '13px', color: 'var(--text-secondary)', lineHeight: '1.5', margin: '0 0 24px 0' }}>
+            Tap the star icon (★) on any railway crossing in the <strong>Crossings</strong> tab or <strong>Home</strong> screen to save it here for instant monitoring, live closure countdowns, and approach notifications.
           </p>
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', alignItems: 'center' }}>
-            <button
-              onClick={handleStartAdd}
-              className="btn btn-primary"
-              style={{ padding: '10px 24px', fontSize: '13px' }}
-            >
-              <Plus size={15} />
-              <span>Add Your First Saved Place</span>
-            </button>
-
-            <button
-              onClick={handleLoadDemoPlaces}
-              className="btn btn-secondary"
-              style={{ fontSize: '12px', padding: '8px 16px' }}
-            >
-              <Sparkles size={13} style={{ color: 'var(--color-accent-tangerine)' }} />
-              <span>Load Sample Places (Demo)</span>
-            </button>
-          </div>
+          <button
+            onClick={() => onNavigate('/crossings')}
+            className="btn btn-primary"
+            style={{ padding: '10px 24px', fontSize: '13.5px', fontWeight: 700, margin: '0 auto', display: 'inline-flex', alignItems: 'center', gap: '8px' }}
+          >
+            <span>Explore Amritsar Crossings</span>
+            <ArrowRight size={15} />
+          </button>
+        </div>
+      ) : sortedCrossings.length === 0 ? (
+        <div className="panel" style={{ padding: '36px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
+          No saved crossings match "{searchQuery}"
         </div>
       ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '16px' }}>
-          {places.map((place) => (
-            <div 
-              key={place.id}
-              className="card"
-              style={{
-                padding: '16px',
-                display: 'flex',
-                flexDirection: 'column',
-                justifyContent: 'space-between',
-                transition: 'border-color 0.2s ease, transform 0.2s ease'
-              }}
-            >
-              <div>
-                <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '8px', marginBottom: '8px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+        /* SAVED CROSSINGS GRID */
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))',
+          gap: '16px'
+        }}>
+          {sortedCrossings.map(crossing => {
+            const timing = getCrossingTimingDetails(crossing, now, trains);
+            const distMeters = getCrossingDistanceMeters(crossing);
+            const distFormatted = distMeters !== null ? formatDistance(distMeters) : null;
+
+            return (
+              <div
+                key={crossing.id}
+                onClick={() => {
+                  if (onSelectCrossing) {
+                    onSelectCrossing(crossing);
+                  } else {
+                    onNavigate('/crossings');
+                  }
+                }}
+                className="mobile-card"
+                style={{
+                  backgroundColor: 'var(--bg-surface)',
+                  border: '1px solid var(--border-panel)',
+                  borderLeft: `4px solid ${timing.statusBadge.color}`,
+                  borderRadius: 'var(--radius-lg)',
+                  padding: '16px 18px',
+                  cursor: 'pointer',
+                  boxShadow: 'var(--shadow-sm)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '10px',
+                  transition: 'transform 0.15s ease, border-color 0.15s ease'
+                }}
+              >
+                {/* CARD HEADER */}
+                <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '8px' }}>
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div style={{ fontFamily: 'var(--font-brand)', fontWeight: 800, fontSize: '16px', color: 'var(--text-primary)', lineHeight: 1.25 }}>
+                      {crossing.name}
+                    </div>
+                    <div style={{ fontSize: '11.5px', color: 'var(--text-secondary)', marginTop: '3px' }}>
+                      <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--accent-primary)', fontWeight: 600 }}>
+                        {crossing.id.replace('osm/node/', 'ASR-')}
+                      </span>
+                      {crossing.punjabiName && ` • ${crossing.punjabiName}`}
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    {/* Star / Unstar Button */}
+                    <button
+                      onClick={(e) => handleToggleFavorite(crossing.id, e)}
+                      title="Remove from saved crossings"
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        cursor: 'pointer',
+                        padding: '4px',
+                        color: '#f59e0b',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center'
+                      }}
+                    >
+                      <Star size={18} fill="#f59e0b" />
+                    </button>
+
+                    {/* Status Badge */}
+                    <span style={{
+                      fontSize: '11px',
+                      fontWeight: 700,
+                      backgroundColor: timing.statusBadge.bg,
+                      color: timing.statusBadge.color,
+                      border: `1px solid ${timing.statusBadge.border}`,
+                      padding: '3px 9px',
+                      borderRadius: 'var(--radius-full)',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '5px'
+                    }}>
+                      <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: timing.statusBadge.dotColor }} />
+                      {timing.statusBadge.label}
+                    </span>
+                  </div>
+                </div>
+
+                {/* ESSENTIAL TRAIN STATUS & TIMING SUMMARY */}
+                <div style={{
+                  backgroundColor: 'var(--surface-muted)',
+                  border: '1px solid var(--border-subtle)',
+                  borderRadius: 'var(--radius-md)',
+                  padding: '11px 13px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '7px',
+                  fontSize: '12.5px'
+                }}>
+                  {/* 1. TRAIN STATUS & SPEED BANNER */}
+                  {timing.hasApproachingTrain && !timing.isTimingUnavailable ? (
                     <div style={{
-                      width: '36px',
-                      height: '36px',
-                      borderRadius: '8px',
-                      background: 'var(--surface-green)',
-                      border: '1px solid var(--border-soft)',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '4px',
+                      padding: '7px 9px',
+                      backgroundColor: timing.isClosedNow ? 'rgba(239, 68, 68, 0.12)' : 'rgba(245, 158, 11, 0.12)',
+                      border: `1px solid ${timing.isClosedNow ? 'rgba(239, 68, 68, 0.3)' : 'rgba(245, 158, 11, 0.3)'}`,
+                      borderRadius: 'var(--radius-sm)'
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '6px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 700, color: timing.isClosedNow ? 'var(--critical-red)' : 'var(--accent-primary)', fontSize: '12px' }}>
+                          <Train size={13} style={{ flexShrink: 0 }} />
+                          <span>#{timing.trainNumber || timing.activeTrain?.trainNumber || 'Active'} {timing.trainName || timing.activeTrain?.trainName || 'Train Approaching'}</span>
+                        </div>
+                        <span style={{ fontSize: '11px', fontFamily: 'var(--font-mono)', color: 'var(--text-primary)', fontWeight: 600 }}>
+                          {timing.trainSpeedText}
+                        </span>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '11.5px' }}>
+                        <span style={{ color: 'var(--text-secondary)' }}>Train Arrival ETA:</span>
+                        <span style={{ fontWeight: 700, color: timing.isClosedNow ? 'var(--critical-red)' : 'var(--accent-primary)', fontFamily: 'var(--font-mono)' }}>
+                          {timing.trainArrivalEtaText}
+                        </span>
+                      </div>
+                      {typeof timing.trainDistanceKm === 'number' && (
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '11px', color: 'var(--text-muted)' }}>
+                          <span>Track Distance:</span>
+                          <span style={{ fontFamily: 'var(--font-mono)' }}>~{timing.trainDistanceKm.toFixed(1)} km away</span>
+                        </div>
+                      )}
+                    </div>
+                  ) : timing.activeTrain ? (
+                    <div style={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '4px',
+                      padding: '7px 9px',
+                      backgroundColor: 'rgba(56, 189, 248, 0.08)',
+                      border: '1px solid rgba(56, 189, 248, 0.22)',
+                      borderRadius: 'var(--radius-sm)'
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '6px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 700, color: 'var(--accent-cyan)', fontSize: '12px' }}>
+                          <Train size={13} style={{ flexShrink: 0 }} />
+                          <span>#{timing.activeTrain.trainNumber} {timing.activeTrain.trainName}</span>
+                        </div>
+                        <span style={{
+                          fontSize: '10.5px',
+                          fontWeight: 700,
+                          padding: '1px 6px',
+                          borderRadius: 'var(--radius-full)',
+                          backgroundColor: timing.activeTrain.isStationary ? 'rgba(245, 158, 11, 0.15)' : 'rgba(56, 189, 248, 0.15)',
+                          color: timing.activeTrain.isStationary ? '#f59e0b' : 'var(--accent-cyan)'
+                        }}>
+                          {timing.activeTrain.isStationary ? 'AT PLATFORM' : (timing.activeTrain.isReceding ? 'RECEDING' : 'MONITORED')}
+                        </span>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '11px', color: 'var(--text-secondary)' }}>
+                        <span>Train Status:</span>
+                        <span style={{ fontWeight: 600, color: 'var(--text-primary)', textAlign: 'right' }}>
+                          {timing.activeTrain.timingText || 'Corridor Monitored'}
+                        </span>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '10.5px', color: 'var(--text-muted)' }}>
+                        <span>Line:</span>
+                        <span>{timing.activeTrain.route || crossing.line || 'Amritsar Corridor'}</span>
+                      </div>
+                    </div>
+                  ) : (
+                    <div style={{
                       display: 'flex',
                       alignItems: 'center',
-                      justifyContent: 'center'
+                      justifyContent: 'space-between',
+                      padding: '6px 9px',
+                      backgroundColor: 'rgba(16, 185, 129, 0.07)',
+                      border: '1px solid rgba(16, 185, 129, 0.22)',
+                      borderRadius: 'var(--radius-sm)',
+                      fontSize: '11.5px'
                     }}>
-                      {getCategoryIcon(place.category)}
-                    </div>
-
-                    <div>
-                      <h3 style={{ fontSize: '14px', fontWeight: 700, margin: 0, color: 'var(--text-primary)' }}>
-                        {place.name}
-                      </h3>
-                      <span className={`badge ${getCategoryBadgeClass(place.category)}`} style={{ fontSize: '10px', marginTop: '2px', display: 'inline-block' }}>
-                        {place.category}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: 'var(--status-open)', fontWeight: 600 }}>
+                        <Train size={13} style={{ flexShrink: 0 }} />
+                        <span>Corridor Approach Clear</span>
+                      </div>
+                      <span style={{ color: 'var(--text-muted)', fontSize: '11px', fontFamily: 'var(--font-mono)' }}>
+                        0 trains within 15 km
                       </span>
                     </div>
-                  </div>
+                  )}
 
-                  <div style={{ display: 'flex', gap: '4px' }}>
-                    <button
-                      onClick={() => handleStartEdit(place)}
-                      title="Edit Place"
-                      style={{
-                        background: 'none',
-                        border: 'none',
-                        color: 'var(--text-secondary)',
-                        cursor: 'pointer',
-                        padding: '6px'
-                      }}
-                    >
-                      <Edit3 size={14} />
-                    </button>
-                    <button
-                      onClick={() => handleDeletePlace(place.id, place.name)}
-                      title="Delete Place"
-                      style={{
-                        background: 'none',
-                        border: 'none',
-                        color: 'var(--text-secondary)',
-                        cursor: 'pointer',
-                        padding: '6px'
-                      }}
-                    >
-                      <Trash2 size={14} />
-                    </button>
-                  </div>
+                  {/* 2. ROADWAY & BARRIER STATE */}
+                  {timing.isClosedNow ? (
+                    <>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                        <span style={{ color: 'var(--text-muted)', fontSize: '11.5px' }}>Roadway status:</span>
+                        <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 700, color: 'var(--critical-red)' }}>
+                          Barriers locked · Do Not Cross
+                        </span>
+                      </div>
+                      {Boolean(timing.reopeningTimeStr) && (
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                          <span style={{ color: 'var(--text-muted)', fontSize: '11.5px' }}>Expected reopening:</span>
+                          <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 700, color: 'var(--status-open)' }}>
+                            {timing.reopeningTimeStr}{timing.reopenCountdownText ? ` (${timing.reopenCountdownText})` : ''}
+                          </span>
+                        </div>
+                      )}
+                    </>
+                  ) : timing.isClosingSoon ? (
+                    <>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                        <span style={{ color: 'var(--text-muted)', fontSize: '11.5px' }}>Expected closure:</span>
+                        <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 700, color: 'var(--critical-red)' }}>
+                          {timing.closingTimeStr ? `${timing.closingTimeStr} (${timing.closingCountdownText || 'soon'})` : 'Closing shortly'}
+                        </span>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                        <span style={{ color: 'var(--text-muted)', fontSize: '11.5px' }}>Roadway status:</span>
+                        <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 700, color: 'var(--accent-primary)' }}>
+                          Plan to Stop · Caution
+                        </span>
+                      </div>
+                    </>
+                  ) : (
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <span style={{ color: 'var(--text-muted)', fontSize: '11.5px' }}>Roadway status:</span>
+                      <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 700, color: 'var(--status-open)', display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
+                        <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: 'var(--status-open)' }} />
+                        Open · Safe to Cross
+                      </span>
+                    </div>
+                  )}
+
+                  {/* 3. Distance from User GPS */}
+                  {distFormatted && (
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '11px', color: 'var(--text-muted)' }}>
+                      <span>Distance from your GPS:</span>
+                      <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--accent-primary)', fontWeight: 600 }}>
+                        {distFormatted}
+                      </span>
+                    </div>
+                  )}
+
+                  {/* 4. Estimated closure duration — strictly NEVER shown when fatak is OPEN */}
+                  {!timing.isTimingUnavailable && !timing.isOpenPassage && (
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <span style={{ color: 'var(--text-muted)', fontSize: '11.5px' }}>Estimated closure:</span>
+                      <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 700, color: 'var(--accent-emphasis)' }}>
+                        {timing.closureDurationText}
+                        {timing.isMultiTrain && ` (${timing.trainCount} trains)`}
+                      </span>
+                    </div>
+                  )}
                 </div>
 
-                {place.address && (
-                  <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '6px 0 8px 0', lineHeight: 1.4 }}>
-                    {place.address}
-                  </p>
-                )}
-
-                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', color: 'var(--text-secondary)', fontFamily: 'var(--font-mono)' }}>
-                  <MapPin size={11} />
-                  <span>{place.lat.toFixed(4)}° N, {place.lng.toFixed(4)}° E</span>
+                {/* CARD FOOTER */}
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '2px' }}>
+                  <span style={{ fontSize: '11.5px', color: 'var(--text-muted)' }}>
+                    {crossing.locality || 'Amritsar Roadway'}
+                  </span>
+                  <span style={{ fontSize: '11.5px', color: 'var(--accent-primary)', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '4px' }}>
+                    <span>View Details</span>
+                    <ArrowRight size={13} />
+                  </span>
                 </div>
               </div>
-
-              {/* ACTION SHORTCUTS */}
-              <div style={{ marginTop: '16px', paddingTop: '12px', borderTop: '1px solid var(--border-soft)', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
-                <button
-                  onClick={() => handleUseAsOrigin(place)}
-                  className="btn btn-secondary"
-                  style={{ fontSize: '11px', padding: '7px 10px', justifyContent: 'center' }}
-                  title="Set as Origin for Journey Planner"
-                >
-                  <Navigation size={12} style={{ transform: 'rotate(180deg)' }} />
-                  <span>Use as Origin</span>
-                </button>
-
-                <button
-                  onClick={() => handleUseAsDestination(place)}
-                  className="btn btn-primary"
-                  style={{ fontSize: '11px', padding: '7px 10px', justifyContent: 'center' }}
-                  title="Plan route arriving at this destination"
-                >
-                  <ArrowUpRight size={13} />
-                  <span>Route Here</span>
-                </button>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>

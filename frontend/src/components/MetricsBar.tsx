@@ -102,7 +102,7 @@ export const MetricsBar: React.FC<MetricsBarProps> = ({ metrics }) => {
               <div style={{
                 fontSize: '20px',
                 fontWeight: 800,
-                color: 'var(--text-white)',
+                color: 'var(--text-primary)',
                 fontFamily: 'var(--font-mono)',
                 lineHeight: 1.1
               }}>

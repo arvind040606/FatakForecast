@@ -28,7 +28,7 @@ export interface RailwayCrossing {
   statusObservationType: 'SIMULATED_TEST_BENCH' | 'UNOBSERVED' | 'KINEMATIC_DERIVATION' | 'TIMETABLE_PROJECTION';
   statusObservationNote: string;
   status: CrossingStatus;
-  gateStatusClassification?: 'VERIFIED_LIVE' | 'ESTIMATED' | 'SCHEDULED' | 'SIMULATED' | 'UNAVAILABLE';
+  gateStatusClassification?: 'VERIFIED_LIVE' | 'ESTIMATED' | 'SCHEDULED' | 'SIMULATED' | 'UNAVAILABLE' | string;
   gateStatusLabel?: string;
   isStatusEstimated?: boolean;
 
@@ -61,6 +61,8 @@ export interface RailwayCrossing {
   expectedTrainArrival?: string | null;
   estimatedGateReopeningTime?: string | null;
   remainingWaitSec?: number;
+  closureDurationMin?: number | null;
+  closureDurationSec?: number | null;
   warningBufferSec?: number;
   traverseDurationSec?: number;
   upcomingTrain?: any;
@@ -94,6 +96,12 @@ export interface RailwayCrossing {
     closureEnd: string;
     trains: any[];
   } | null;
+  timingMetrics?: {
+    passageTime?: string | null;
+    likelyClosure?: string | null;
+    likelyReopen?: string | null;
+    leadBuffer?: string | null;
+  } | null;
   dataClassification?: string;
   dataClassificationLabel?: string;
   queueEstimateVehicles?: number;
@@ -120,9 +128,22 @@ export interface RailwayCrossing {
   predictionConfidence?: 'HIGH' | 'MODERATE' | 'LOW' | 'UNAVAILABLE';
   dataFreshness?: string;
   providerObservationTimestamp?: string | null;
+  lastProviderSyncTimestamp?: string | null;
   apiRetrievalTimestamp?: string | null;
   calculationTimestamp?: string | null;
-  lastProviderSyncTimestamp?: string | null;
+  activeDrill?: boolean;
+  closureReported?: boolean;
+  confirmedOpenReport?: boolean;
+  historicalTrafficPattern?: {
+    isHistoricalOnly: boolean;
+    corridorType: string;
+    corridorClassificationLabel: string;
+    scheduledDailyPassages: number;
+    peakWindowsIST: string[];
+    historicalAvgClosureDurationMin: number;
+    dataSource: string;
+    disclaimer?: string;
+  };
   lastTrainPassed?: {
     trainNumber: string;
     trainName: string;
@@ -226,16 +247,30 @@ export interface RailwayCorridor {
   tracksCount?: number;
 }
 
+export type ConnectionLifecycleState = 'CONNECTING' | 'LIVE' | 'STALE' | 'OFFLINE';
+
+export interface ConnectionStateDetails {
+  state: ConnectionLifecycleState;
+  backendConnected: boolean;
+  railwayFeedStatus: 'LIVE' | 'STALE' | 'OFFLINE';
+  latencyMs: number | null;
+  lastSyncIso: string | null;
+}
+
 export interface OperationalMetrics {
   totalCrossings: number;
   openCount: number;
   closedCount: number;
   approachingCount: number;
+  unknownCount?: number;
+  closureExpectedCount?: number;
   upcomingPredictedClosures: number;
   activeSectorTrains: number;
   trainsInSector?: number;
   feedLatencyMs: number | null;
   feedStatus: 'CONNECTED' | 'ONLINE_SYNCHRONIZED' | 'DEGRADED' | 'DISCONNECTED';
+  railwayFeedFreshness?: 'LIVE' | 'STALE' | 'OFFLINE';
+  socketConnected?: boolean;
   feedProvider?: string;
   provider?: string;
   isDualFeedActive?: boolean;
@@ -249,7 +284,7 @@ export interface TelemetryPayload {
   metrics: OperationalMetrics;
   crossings: RailwayCrossing[];
   trains: SectorTrain[];
-  activeCorridors: RailwayCorridor[];
+  activeCorridors?: RailwayCorridor[];
 }
 
 export interface ClosureForecast {
@@ -366,23 +401,38 @@ export interface PlaceSearchResult {
   provider: string;
 }
 
+export type NotificationCategory = 
+  | 'departureReminders' 
+  | 'crossingStatusChanges' 
+  | 'routeEtaChanges' 
+  | 'activeRouteWarnings' 
+  | 'providerOutages';
+
 export interface NotificationPreferences {
   departureReminders: boolean; // Upcoming recommended departure
   crossingStatusChanges: boolean; // Meaningful shifts in predicted crossing closure
   routeEtaChanges: boolean; // Significant changes to route or ETA
   activeRouteWarnings: boolean; // Crossing warning during active journey
   providerOutages: boolean; // Provider outage invalidating recommendation
+  // Configurable thresholds & cooldowns
+  alertRadiusMeters: number; // Vicinity radius for approaching crossing alerts (e.g. 2500m)
+  routeDelayThresholdMin: number; // Delay difference to trigger route change alert (e.g. 3 min)
+  closureAdvanceNoticeMin: number; // Advance notice for predicted closure window (e.g. 5 min)
+  cooldownMinutes: number; // Cooldown between repeat alerts for same event (e.g. 10 min)
 }
 
 export interface AppNotification {
   id: string;
   title: string;
   body: string;
-  category: keyof NotificationPreferences;
+  category: NotificationCategory;
   timestamp: string;
   crossingId?: string;
+  crossingName?: string;
   isRead: boolean;
   scheduledFor?: string;
+  eventSignature?: string;
+  actionUrl?: string;
 }
 
 export interface RouteCrossingHit {
@@ -436,6 +486,7 @@ export interface RouteTurnStep {
 
 export interface CandidateJourneyRoute {
   id: string;
+  name?: string;
   type: 'FASTEST_ROAD' | 'FATAK_AWARE' | 'AVOID_FATAKS';
   label: string;
   description: string;
@@ -445,18 +496,27 @@ export interface CandidateJourneyRoute {
   distanceKm: number;
   roadDurationSec: number;
   roadDurationMin: number;
+  durationMin?: number;
   crossingDelaySec: number | null;
+  delayRange?: string;
+  dataFreshness?: string;
   isDelayUnknown: boolean;
   unknownCrossingsCount: number;
   totalDurationSec: number;
   totalDurationMin: number;
+  totalEstimatedMin?: number;
   estimatedArrivalTime: string;
   crossingsCount: number;
+  crossingCount?: number;
   crossings: RouteCrossingHit[];
+  crossingsOnRoute?: any[];
   coordinates: [number, number][];
   steps?: RouteTurnStep[];
   isGradeSeparatedFlyover?: boolean;
   bypassName?: string | null;
+  comparisonBadge?: string;
+  tradeoffSummary?: string;
+  recommendationReason?: string;
   dataConfidence: {
     level: string;
     label: string;
@@ -548,6 +608,7 @@ export type ActiveRoute =
   | '/settings'
   | '/analytics';
 
+
 export interface ProviderTelemetry {
   timestamp: string;
   overallStatus: string;
@@ -621,3 +682,26 @@ export interface CommuteAlarmDepartureEstimate {
   urgency: 'LEAVE_IMMEDIATELY' | 'LEAVE_SOON' | 'ON_TRACK' | 'PASSED';
   reason: string;
 }
+
+export type LocationSource = 'GPS_HARDWARE' | 'MANUAL_ENTRY' | 'APPROXIMATE_IP';
+
+export interface UserLocationProfile {
+  userName?: string;
+  lat: number;
+  lng: number;
+  locationName: string;
+  source: LocationSource;
+  isApproximate: boolean;
+  accuracyMeters?: number;
+  updatedAt: string;
+}
+
+export interface NearbyCrossingItem {
+  crossing: RailwayCrossing;
+  distanceMeters: number;
+  distanceKm: number;
+  distanceLabel: string;
+  dataFreshness: 'LIVE' | 'SCHEDULED' | 'CALCULATED_BASELINE';
+}
+
+export type ThemeMode = 'dark' | 'light' | 'system';

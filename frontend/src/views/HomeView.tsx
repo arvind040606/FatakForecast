@@ -7,6 +7,7 @@ import {
   ArrowRight, 
   ShieldAlert, 
   CheckCircle, 
+  CheckCircle2,
   AlertTriangle, 
   Car, 
   Bike, 
@@ -18,7 +19,9 @@ import {
   BellRing,
   Info,
   GitFork,
-  Train
+  Train,
+  TrainTrack,
+  Star
 } from 'lucide-react';
 import { 
   RailwayCrossing, 
@@ -33,8 +36,9 @@ import {
 import { nativeService } from '../services/nativeService';
 import { railwayApi } from '../services/apiService';
 import { AMRITSAR_LANDMARKS } from '../data/landmarks';
-import { findImpactingTrainForCrossing } from '../utils/trainHelpers';
+import { findImpactingTrainForCrossing, getCrossingTimingDetails } from '../utils/trainHelpers';
 import { useSharedTimer, getAuthoritativeTargetEpoch, calculateRemainingSeconds, formatCountdown } from '../utils/timerManager';
+import { ClosureCountdown } from '../components/ClosureCountdown';
 
 interface HomeViewProps {
   metrics: OperationalMetrics;
@@ -59,10 +63,12 @@ export const HomeView: React.FC<HomeViewProps> = ({
   const [gpsLoading, setGpsLoading] = useState<boolean>(false);
   const [gpsPos, setGpsPos] = useState<{ lat: number; lng: number; accuracy: number } | null>(null);
   const [locationPermission, setLocationPermission] = useState<'prompt' | 'granted' | 'denied'>('prompt');
+  const [manualLandmarkId, setManualLandmarkId] = useState<string>('');
+  const [favIds, setFavIds] = useState<string[]>(() => nativeService.getFavoriteCrossingIds());
   
   // Destination selection
   const [savedPlaces, setSavedPlaces] = useState<SavedPlace[]>([]);
-  const [selectedDestId, setSelectedDestId] = useState<string>('place_work_station');
+  const [selectedDestId, setSelectedDestId] = useState<string>('ASR_STATION');
   const [travelMode, setTravelMode] = useState<TravelMode>('car');
 
   // Quick departure plan state
@@ -82,7 +88,41 @@ export const HomeView: React.FC<HomeViewProps> = ({
         acquireGps();
       }
     });
+
+    const handleFavUpdated = (e: any) => {
+      setFavIds(e.detail || nativeService.getFavoriteCrossingIds());
+    };
+    window.addEventListener('fatak:favorite-crossings-updated', handleFavUpdated);
+    return () => window.removeEventListener('fatak:favorite-crossings-updated', handleFavUpdated);
   }, []);
+
+  // Determine current commuter reference location (GPS hardware > selected landmark > user profile > central Amritsar)
+  const userLoc: [number, number] = (() => {
+    if (gpsPos) return [gpsPos.lat, gpsPos.lng];
+    if (manualLandmarkId) {
+      const lm = AMRITSAR_LANDMARKS.find(l => l.id === manualLandmarkId);
+      if (lm) return [lm.lat, lm.lng];
+    }
+    const prof = nativeService.getUserLocationProfile();
+    if (prof) return [prof.lat, prof.lng];
+    return [31.6338, 74.8655]; // Amritsar Jn default
+  })();
+
+  const nearestData = (() => {
+    if (!crossings || crossings.length === 0) return null;
+    let closest = crossings[0];
+    let minD = Infinity;
+    crossings.forEach(c => {
+      const d = Math.hypot((c.lat - userLoc[0]) * 111000, (c.lng - userLoc[1]) * 111000);
+      if (d < minD) {
+        minD = d;
+        closest = c;
+      }
+    });
+    const distKm = (minD / 1000).toFixed(1);
+    const driveTimeMin = Math.max(1, Math.round((minD / 1000) / 28 * 60));
+    return { crossing: closest, distKm, driveTimeMin, distMeters: Math.round(minD) };
+  })();
 
   // Acquire current GPS position
   const acquireGps = async () => {
@@ -102,9 +142,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
 
   // Re-calculate quick departure recommendation whenever location, destination or mode changes
   useEffect(() => {
-    const originCoords: [number, number] = gpsPos 
-      ? [gpsPos.lat, gpsPos.lng] 
-      : [31.6200, 74.8765]; // Default to Golden Temple area if GPS not yet granted
+    const originCoords: [number, number] = userLoc;
 
     // Find destination coords
     let destCoords: [number, number] = [31.6338, 74.8655]; // Amritsar Jn
@@ -148,11 +186,16 @@ export const HomeView: React.FC<HomeViewProps> = ({
       ? new Date(Date.now() + rec.recommendedDepartureOffsetSec * 1000)
       : undefined;
 
+    const targetCrossing = quickPlan.primaryRoute?.crossings?.[0];
     const ok = await nativeService.scheduleNotification({
       title: rec.action === 'WAIT' ? `⏳ FatakForecast: Optimal Departure in ${offsetMin}m` : `🟢 FatakForecast: Clear to Depart`,
       body: rec.summary,
       category: 'departureReminders',
-      scheduledDate
+      scheduledDate,
+      crossingId: targetCrossing?.id,
+      crossingName: targetCrossing?.name,
+      eventSignature: `home_dep:${targetCrossing?.id || 'route'}:${offsetMin}`,
+      actionUrl: '/planner'
     });
 
     if (ok) {
@@ -167,10 +210,10 @@ export const HomeView: React.FC<HomeViewProps> = ({
   const crossingsOnRoute = primaryRoute?.crossings || [];
 
   return (
-    <div className="page-container" style={{ paddingBottom: '90px' }}>
+    <div className="page-container">
       {/* HERO & OVERVIEW BANNER */}
       <div style={{
-        backgroundColor: '#FFFFFF',
+        backgroundColor: 'var(--bg-surface)',
         border: '1px solid var(--border-soft)',
         borderRadius: 'var(--radius-lg)',
         padding: '16px 18px',
@@ -186,11 +229,11 @@ export const HomeView: React.FC<HomeViewProps> = ({
                 fontWeight: 700, 
                 textTransform: 'uppercase', 
                 letterSpacing: '0.06em',
-                color: 'var(--accent-primary)',
-                backgroundColor: 'var(--surface-green)',
+                color: 'var(--accent-cyan)',
+                backgroundColor: 'rgba(56, 189, 248, 0.12)',
                 padding: '2px 8px',
                 borderRadius: 'var(--radius-full)',
-                border: '1px solid var(--surface-green-border)'
+                border: '1px solid rgba(56, 189, 248, 0.25)'
               }}>
                 Amritsar Railway Hub
               </span>
@@ -211,7 +254,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
               fontFamily: 'var(--font-brand)',
               fontSize: 'clamp(20px, 4.5vw, 24px)', 
               fontWeight: 800, 
-              color: 'var(--accent-emphasis)',
+              color: 'var(--text-primary)',
               letterSpacing: '-0.02em',
               margin: '0 0 4px 0' 
             }}>
@@ -253,7 +296,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
           borderTop: '1px solid var(--border-subtle)'
         }}>
           <div style={{
-            backgroundColor: '#FAF9F5',
+            backgroundColor: 'var(--bg-secondary)',
             padding: '10px 12px',
             borderRadius: 'var(--radius-md)',
             border: '1px solid var(--border-subtle)'
@@ -268,7 +311,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
           </div>
 
           <div style={{
-            backgroundColor: metrics.closedCount > 0 ? 'var(--status-closed-bg)' : '#FAF9F5',
+            backgroundColor: metrics.closedCount > 0 ? 'var(--status-closed-bg)' : 'var(--bg-secondary)',
             padding: '10px 12px',
             borderRadius: 'var(--radius-md)',
             border: `1px solid ${metrics.closedCount > 0 ? 'var(--status-closed-border)' : 'var(--border-subtle)'}`
@@ -285,7 +328,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
           </div>
 
           <div style={{
-            backgroundColor: metrics.approachingCount > 0 ? 'var(--status-approaching-bg)' : '#FAF9F5',
+            backgroundColor: metrics.approachingCount > 0 ? 'var(--status-approaching-bg)' : 'var(--bg-secondary)',
             padding: '10px 12px',
             borderRadius: 'var(--radius-md)',
             border: `1px solid ${metrics.approachingCount > 0 ? 'var(--status-approaching-border)' : 'var(--border-subtle)'}`
@@ -302,7 +345,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
           </div>
 
           <div style={{
-            backgroundColor: '#FAF9F5',
+            backgroundColor: 'var(--bg-secondary)',
             padding: '10px 12px',
             borderRadius: 'var(--radius-md)',
             border: '1px solid var(--border-subtle)'
@@ -318,6 +361,282 @@ export const HomeView: React.FC<HomeViewProps> = ({
         </div>
       </div>
 
+      {/* NEAREST RAILWAY FATAK TO YOU — ANSWERS THE 4 CORE COMMUTER QUESTIONS */}
+      {nearestData && (
+        <div style={{
+          backgroundColor: 'var(--bg-surface)',
+          border: '1.5px solid var(--border-soft)',
+          borderRadius: 'var(--radius-lg)',
+          padding: '18px 20px',
+          marginBottom: '16px',
+          boxShadow: 'var(--shadow-md)',
+          position: 'relative'
+        }}>
+          {/* Header */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px', flexWrap: 'wrap', gap: '8px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <div style={{
+                width: '32px',
+                height: '32px',
+                borderRadius: '50%',
+                backgroundColor: 'rgba(56, 189, 248, 0.15)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                color: 'var(--accent-primary)',
+                flexShrink: 0
+              }}>
+                <MapPin size={17} />
+              </div>
+              <div>
+                <h2 style={{ fontFamily: 'var(--font-brand)', fontSize: '16px', fontWeight: 800, margin: 0, color: 'var(--text-primary)' }}>
+                  Nearest Railway Fatak to You
+                </h2>
+                <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
+                  {gpsPos 
+                    ? `Live distance from your current GPS location` 
+                    : manualLandmarkId 
+                    ? `Relative to selected Amritsar landmark` 
+                    : `Relative to your profile area (Tap dropdown to change)`}
+                </div>
+              </div>
+            </div>
+
+            {/* Reference Location Fallback Switcher */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <select
+                value={manualLandmarkId}
+                onChange={(e) => {
+                  setManualLandmarkId(e.target.value);
+                  nativeService.triggerHaptic('light');
+                }}
+                style={{
+                  background: 'var(--bg-secondary)',
+                  border: '1px solid var(--border-subtle)',
+                  borderRadius: 'var(--radius-sm)',
+                  padding: '5px 10px',
+                  fontSize: '11px',
+                  color: 'var(--text-primary)',
+                  cursor: 'pointer'
+                }}
+                title="Change reference landmark"
+              >
+                <option value="">{gpsPos ? "My Current GPS Location" : "Select Reference Point..."}</option>
+                {AMRITSAR_LANDMARKS.map(lm => (
+                  <option key={lm.id} value={lm.id}>{lm.name.split(' (')[0]}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {/* 4 CORE QUESTIONS GRID */}
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))',
+            gap: '12px',
+            marginBottom: '14px'
+          }}>
+            {/* 1. Which fatak is nearby? */}
+            <div style={{
+              backgroundColor: 'var(--bg-secondary)',
+              border: '1px solid var(--border-subtle)',
+              borderRadius: 'var(--radius-md)',
+              padding: '12px 14px'
+            }}>
+              <div style={{ fontSize: '10px', textTransform: 'uppercase', fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.04em' }}>
+                1. Which Fatak Is Nearby?
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '4px' }}>
+                <div style={{ fontSize: '15px', fontWeight: 800, color: 'var(--text-primary)' }}>
+                  {nearestData.crossing.name}
+                </div>
+                <button
+                  onClick={async (e) => {
+                    e.stopPropagation();
+                    await nativeService.toggleFavoriteCrossing(nearestData.crossing.id);
+                    setFavIds(nativeService.getFavoriteCrossingIds());
+                  }}
+                  title={favIds.includes(nearestData.crossing.id) ? "Remove favourite" : "Save as favourite fatak"}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    cursor: 'pointer',
+                    padding: '2px',
+                    color: favIds.includes(nearestData.crossing.id) ? '#f59e0b' : 'var(--text-muted)'
+                  }}
+                >
+                  <Star size={16} fill={favIds.includes(nearestData.crossing.id) ? '#f59e0b' : 'none'} />
+                </button>
+              </div>
+              <div style={{ fontSize: '11.5px', color: 'var(--accent-primary)', fontWeight: 600, marginTop: '2px' }}>
+                {nearestData.distKm} km away • ~{nearestData.driveTimeMin} min {travelMode} travel
+              </div>
+              <div style={{ fontSize: '10.5px', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                {nearestData.crossing.punjabiName} • {nearestData.crossing.locality || 'Amritsar'}
+              </div>
+            </div>
+
+            {/* 2. When might it close? */}
+            <div style={{
+              backgroundColor: 'var(--bg-secondary)',
+              border: '1px solid var(--border-subtle)',
+              borderRadius: 'var(--radius-md)',
+              padding: '12px 14px'
+            }}>
+              <div style={{ fontSize: '10px', textTransform: 'uppercase', fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.04em' }}>
+                2. When Might It Close?
+              </div>
+              <div style={{
+                fontSize: '14px',
+                fontWeight: 800,
+                marginTop: '4px',
+                color: (nearestData.crossing.status === 'CLOSED' || nearestData.crossing.status === 'CLOSURE_REPORTED') 
+                  ? 'var(--critical-red)' 
+                  : (nearestData.crossing.status === 'APPROACHING' || nearestData.crossing.timeToNextClosureSec > 0) 
+                  ? 'var(--warning-amber)' 
+                  : 'var(--status-open)'
+              }}>
+                {(() => {
+                  const c = nearestData.crossing;
+                  if (c.status === 'CLOSED' || c.status === 'CLOSURE_REPORTED') {
+                    return 'Gate is closed right now';
+                  }
+                  if (c.timeToNextClosureSec && c.timeToNextClosureSec > 0) {
+                    const min = Math.max(1, Math.round(c.timeToNextClosureSec / 60));
+                    return `Expected closure in ~${min} min`;
+                  }
+                  if (c.status === 'APPROACHING') {
+                    return 'Closing shortly (Train in block)';
+                  }
+                  if (c.status === 'UNKNOWN') {
+                    return 'Timing unavailable';
+                  }
+                  return 'No closure in next 15 mins';
+                })()}
+              </div>
+              <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                {(() => {
+                  const c = nearestData.crossing;
+                  if (c.estimatedGateClosingTime) {
+                    try {
+                      return `Predicted closure at ${new Date(c.estimatedGateClosingTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+                    } catch (e) {}
+                  }
+                  return c.status === 'CLOSED' ? 'Train traversing crossing' : 'Live railway radar telemetry';
+                })()}
+              </div>
+            </div>
+
+            {/* 3. When can I cross? */}
+            <div style={{
+              backgroundColor: 'var(--bg-secondary)',
+              border: '1px solid var(--border-subtle)',
+              borderRadius: 'var(--radius-md)',
+              padding: '12px 14px'
+            }}>
+              <div style={{ fontSize: '10px', textTransform: 'uppercase', fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.04em' }}>
+                3. When Can I Cross?
+              </div>
+              <div style={{
+                fontSize: '14px',
+                fontWeight: 800,
+                marginTop: '4px',
+                color: (nearestData.crossing.status === 'CLOSED' || nearestData.crossing.status === 'CLOSURE_REPORTED') 
+                  ? 'var(--critical-red)' 
+                  : (nearestData.crossing.status === 'APPROACHING' || nearestData.crossing.status === 'CLOSURE_EXPECTED') 
+                  ? 'var(--warning-amber)' 
+                  : 'var(--status-open)'
+              }}>
+                {(() => {
+                  const c = nearestData.crossing;
+                  if (c.status === 'CLOSED' || c.status === 'CLOSURE_REPORTED') {
+                    const waitMin = (typeof c.remainingWaitSec === 'number' && c.remainingWaitSec > 0) ? Math.max(1, Math.round(c.remainingWaitSec / 60)) : null;
+                    return waitMin ? `Expected reopen in ~${waitMin} min` : 'Gates closed for train transit';
+                  }
+                  if (c.status === 'APPROACHING') {
+                    return 'Closing soon — halt if signals flash';
+                  }
+                  if (c.status === 'UNKNOWN') {
+                    return 'Status unconfirmed — Check on approach';
+                  }
+                  return 'Safe to cross now (Clear passage)';
+                })()}
+              </div>
+              <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                {(() => {
+                  const c = nearestData.crossing;
+                  if (c.status === 'CLOSED' || c.status === 'CLOSURE_REPORTED') {
+                    return c.predictedReopenTime 
+                      ? `Expected reopening at ${new Date(c.predictedReopenTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+                      : 'Waiting for track clearance confirmation';
+                  }
+                  if (c.status === 'APPROACHING') {
+                    return 'Train approaching corridor — prepare to stop';
+                  }
+                  if (c.status === 'UNKNOWN') {
+                    return 'Telemetry unconfirmed — proceed with caution';
+                  }
+                  return 'Roadway clear for vehicles';
+                })()}
+              </div>
+            </div>
+
+            {/* 4. What should I do next? */}
+            <div style={{
+              backgroundColor: 'var(--bg-secondary)',
+              border: '1px solid var(--border-subtle)',
+              borderRadius: 'var(--radius-md)',
+              padding: '12px 14px'
+            }}>
+              <div style={{ fontSize: '10px', textTransform: 'uppercase', fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.04em' }}>
+                4. What Should I Do Next?
+              </div>
+              <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text-primary)', marginTop: '4px', lineHeight: 1.35 }}>
+                {(() => {
+                  const c = nearestData.crossing;
+                  if (c.status === 'CLOSED' || c.status === 'CLOSURE_REPORTED') {
+                    const waitMin = (typeof c.remainingWaitSec === 'number' && c.remainingWaitSec > 0) ? Math.max(1, Math.round(c.remainingWaitSec / 60)) : null;
+                    return waitMin 
+                      ? `Wait ~${waitMin}m before departure, or take Bhandari Bridge flyover bypass.`
+                      : 'Wait for gate reopening, or take Bhandari Bridge flyover bypass.';
+                  }
+                  if (c.status === 'APPROACHING') {
+                    return 'Crossing is closing soon. Check alternate route on Journey Planner.';
+                  }
+                  if (c.status === 'UNKNOWN') {
+                    return 'Slow down and visually inspect tracks before crossing. Telemetry feed unverified.';
+                  }
+                  return 'Safe to proceed directly through crossing. Normal traffic flow.';
+                })()}
+              </div>
+              <div style={{ marginTop: '6px' }}>
+                <button
+                  onClick={() => onSelectCrossing(nearestData.crossing)}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    padding: 0,
+                    color: 'var(--accent-primary)',
+                    fontSize: '11.5px',
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '4px'
+                  }}
+                >
+                  <span>View Full Timeline &amp; Train Details</span>
+                  <ArrowRight size={13} />
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Embedded 3-Step Timeline for the Nearest Fatak */}
+          <ClosureCountdown crossing={nearestData.crossing} showTimeline={true} />
+        </div>
+      )}
+
       {/* QUICK DESTINATION & TRAVEL MODE SELECTOR */}
       <div className="panel" style={{ padding: '14px 16px', marginBottom: '16px' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px' }}>
@@ -329,8 +648,8 @@ export const HomeView: React.FC<HomeViewProps> = ({
             className="btn btn-ghost"
             style={{ fontSize: '12px', padding: '3px 8px' }}
           >
-            <Bookmark size={13} />
-            <span>Manage Places</span>
+            <Star size={13} />
+            <span>Saved Crossings</span>
           </button>
         </div>
 
@@ -341,7 +660,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
               key={place.id}
               onClick={() => { setSelectedDestId(place.id); nativeService.triggerHaptic('light'); }}
               style={{
-                backgroundColor: selectedDestId === place.id ? 'var(--surface-green)' : '#FAF9F5',
+                backgroundColor: selectedDestId === place.id ? 'rgba(56, 189, 248, 0.15)' : 'var(--bg-secondary)',
                 border: `1.5px solid ${selectedDestId === place.id ? 'var(--accent-primary)' : 'var(--border-subtle)'}`,
                 borderRadius: 'var(--radius-md)',
                 padding: '9px 14px',
@@ -350,7 +669,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
                 gap: '8px',
                 whiteSpace: 'nowrap',
                 cursor: 'pointer',
-                color: selectedDestId === place.id ? 'var(--accent-emphasis)' : 'var(--text-primary)',
+                color: selectedDestId === place.id ? 'var(--accent-primary)' : 'var(--text-primary)',
                 transition: 'all 0.15s ease'
               }}
             >
@@ -365,7 +684,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
               key={landmark.id}
               onClick={() => { setSelectedDestId(landmark.id); nativeService.triggerHaptic('light'); }}
               style={{
-                backgroundColor: selectedDestId === landmark.id ? 'var(--surface-green)' : '#FAF9F5',
+                backgroundColor: selectedDestId === landmark.id ? 'rgba(56, 189, 248, 0.15)' : 'var(--bg-secondary)',
                 border: `1.5px solid ${selectedDestId === landmark.id ? 'var(--accent-primary)' : 'var(--border-subtle)'}`,
                 borderRadius: 'var(--radius-md)',
                 padding: '9px 14px',
@@ -374,7 +693,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
                 gap: '8px',
                 whiteSpace: 'nowrap',
                 cursor: 'pointer',
-                color: selectedDestId === landmark.id ? 'var(--accent-emphasis)' : 'var(--text-secondary)',
+                color: selectedDestId === landmark.id ? 'var(--accent-primary)' : 'var(--text-secondary)',
                 transition: 'all 0.15s ease'
               }}
             >
@@ -391,8 +710,8 @@ export const HomeView: React.FC<HomeViewProps> = ({
             <button
               onClick={() => handleModeChange('car')}
               style={{
-                backgroundColor: travelMode === 'car' ? 'var(--accent-primary)' : '#FAF9F5',
-                color: travelMode === 'car' ? '#FFFFFF' : 'var(--text-primary)',
+                backgroundColor: travelMode === 'car' ? 'var(--accent-primary)' : 'var(--bg-secondary)',
+                color: travelMode === 'car' ? 'var(--text-on-accent)' : 'var(--text-primary)',
                 border: `1px solid ${travelMode === 'car' ? 'var(--accent-primary)' : 'var(--border-subtle)'}`,
                 borderRadius: 'var(--radius-sm)',
                 padding: '6px 14px',
@@ -411,8 +730,8 @@ export const HomeView: React.FC<HomeViewProps> = ({
             <button
               onClick={() => handleModeChange('motorcycle')}
               style={{
-                backgroundColor: travelMode === 'motorcycle' ? 'var(--accent-primary)' : '#FAF9F5',
-                color: travelMode === 'motorcycle' ? '#FFFFFF' : 'var(--text-primary)',
+                backgroundColor: travelMode === 'motorcycle' ? 'var(--accent-primary)' : 'var(--bg-secondary)',
+                color: travelMode === 'motorcycle' ? 'var(--text-on-accent)' : 'var(--text-primary)',
                 border: `1px solid ${travelMode === 'motorcycle' ? 'var(--accent-primary)' : 'var(--border-subtle)'}`,
                 borderRadius: 'var(--radius-sm)',
                 padding: '6px 14px',
@@ -431,8 +750,8 @@ export const HomeView: React.FC<HomeViewProps> = ({
             <button
               onClick={() => handleModeChange('walking')}
               style={{
-                backgroundColor: travelMode === 'walking' ? 'var(--accent-primary)' : '#FAF9F5',
-                color: travelMode === 'walking' ? '#FFFFFF' : 'var(--text-primary)',
+                backgroundColor: travelMode === 'walking' ? 'var(--accent-primary)' : 'var(--bg-secondary)',
+                color: travelMode === 'walking' ? 'var(--text-on-accent)' : 'var(--text-primary)',
                 border: `1px solid ${travelMode === 'walking' ? 'var(--accent-primary)' : 'var(--border-subtle)'}`,
                 borderRadius: 'var(--radius-sm)',
                 padding: '6px 14px',
@@ -454,9 +773,9 @@ export const HomeView: React.FC<HomeViewProps> = ({
       {/* SMART DEPARTURE RECOMMENDATION ENGINE */}
       <div style={{
         backgroundColor: rec?.action === 'WAIT' 
-          ? 'var(--surface-orange)' 
-          : (rec?.action === 'CONSIDER_ALTERNATIVE' ? '#FFF9EE' : 'var(--surface-green)'),
-        border: `1.5px solid ${rec?.action === 'WAIT' ? 'var(--surface-orange-border)' : (rec?.action === 'CONSIDER_ALTERNATIVE' ? 'var(--status-approaching-border)' : 'var(--surface-green-border)')}`,
+          ? 'rgba(239, 68, 68, 0.12)' 
+          : (rec?.action === 'CONSIDER_ALTERNATIVE' ? 'rgba(245, 158, 11, 0.12)' : 'rgba(16, 185, 129, 0.12)'),
+        border: `1.5px solid ${rec?.action === 'WAIT' ? 'rgba(239, 68, 68, 0.35)' : (rec?.action === 'CONSIDER_ALTERNATIVE' ? 'rgba(245, 158, 11, 0.35)' : 'rgba(16, 185, 129, 0.35)')}`,
         borderRadius: 'var(--radius-lg)',
         padding: '22px',
         marginBottom: '24px',
@@ -482,7 +801,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
             fontWeight: 700,
             padding: '4px 10px',
             borderRadius: 'var(--radius-full)',
-            backgroundColor: '#FFFFFF',
+            backgroundColor: 'var(--bg-surface)',
             color: rec?.action === 'LEAVE_NOW' ? 'var(--status-open)' : 'var(--accent-tangerine)',
             border: '1px solid var(--border-soft)'
           }}>
@@ -509,7 +828,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
             display: 'grid',
             gridTemplateColumns: 'repeat(3, 1fr)',
             gap: '12px',
-            backgroundColor: '#FFFFFF',
+            backgroundColor: 'var(--bg-surface)',
             borderRadius: 'var(--radius-md)',
             border: '1px solid var(--border-soft)',
             padding: '14px',
@@ -609,7 +928,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
                   }
                 }}
                 style={{
-                  backgroundColor: '#FFFFFF',
+                  backgroundColor: 'var(--bg-surface)',
                   border: `1px solid ${hit.conflictSeverity === 'HIGH' ? 'var(--status-closed-border)' : 'var(--border-soft)'}`,
                   borderRadius: 'var(--radius-md)',
                   padding: '14px',
@@ -629,9 +948,9 @@ export const HomeView: React.FC<HomeViewProps> = ({
                       fontSize: '10.5px', 
                       padding: '2px 8px', 
                       borderRadius: 'var(--radius-full)',
-                      backgroundColor: hit.currentStatus === 'CLOSED' ? 'var(--status-closed-bg)' : 'var(--surface-green)',
+                      backgroundColor: hit.currentStatus === 'CLOSED' ? 'var(--status-closed-bg)' : 'rgba(16, 185, 129, 0.15)',
                       color: hit.currentStatus === 'CLOSED' ? 'var(--status-closed)' : 'var(--status-open)',
-                      border: `1px solid ${hit.currentStatus === 'CLOSED' ? 'var(--status-closed-border)' : 'var(--surface-green-border)'}`,
+                      border: `1px solid ${hit.currentStatus === 'CLOSED' ? 'var(--status-closed-border)' : 'rgba(16, 185, 129, 0.3)'}`,
                       fontWeight: 700
                     }}>
                       {hit.gateStatusLabel}
@@ -692,18 +1011,16 @@ export const HomeView: React.FC<HomeViewProps> = ({
             const displayList = keyCrossings.length === 4 ? keyCrossings : crossings.slice(0, 4);
 
             return displayList.map(crossing => {
-              const isClosed = crossing.status === 'CLOSED';
-              const isApproaching = crossing.status === 'APPROACHING';
-              const isUnknown = crossing.status === 'UNKNOWN';
+              const timing = getCrossingTimingDetails(crossing, now, trains);
 
             return (
               <div
                 key={crossing.id}
                 onClick={() => onSelectCrossing(crossing)}
                 style={{
-                  backgroundColor: '#FFFFFF',
-                  border: `1px solid ${isClosed ? 'var(--status-closed-border)' : (isApproaching ? 'var(--status-approaching-border)' : (isUnknown ? 'var(--border-subtle)' : 'var(--border-soft)'))}`,
-                  borderLeft: `4px solid ${isClosed ? 'var(--status-closed)' : (isApproaching ? 'var(--status-approaching)' : (isUnknown ? 'var(--text-muted)' : 'var(--status-open)'))}`,
+                  backgroundColor: 'var(--bg-surface)',
+                  border: `1px solid ${timing.statusBadge.border}`,
+                  borderLeft: `4px solid ${timing.statusBadge.color}`,
                   borderRadius: 'var(--radius-md)',
                   padding: '14px',
                   cursor: 'pointer',
@@ -720,10 +1037,11 @@ export const HomeView: React.FC<HomeViewProps> = ({
                     fontWeight: 700,
                     padding: '2px 7px',
                     borderRadius: 'var(--radius-full)',
-                    backgroundColor: isClosed ? 'var(--status-closed-bg)' : (isApproaching ? 'var(--status-approaching-bg)' : (isUnknown ? '#FAF9F5' : 'var(--surface-green)')),
-                    color: isClosed ? 'var(--status-closed)' : (isApproaching ? 'var(--status-approaching)' : (isUnknown ? 'var(--text-secondary)' : 'var(--status-open)'))
+                    backgroundColor: timing.statusBadge.bg,
+                    color: timing.statusBadge.color,
+                    border: `1px solid ${timing.statusBadge.border}`
                   }}>
-                    {isClosed ? 'CLOSED' : (isApproaching ? 'APPROACH' : (isUnknown ? 'UNCONFIRMED' : 'OPEN'))}
+                    {timing.statusBadge.label}
                   </span>
                 </div>
 
@@ -731,32 +1049,30 @@ export const HomeView: React.FC<HomeViewProps> = ({
                   {crossing.punjabiName} • {crossing.locality}
                 </div>
 
-                <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '8px', display: 'flex', alignItems: 'center', gap: '5px' }}>
-                  <Clock size={12} color="var(--accent-primary)" />
-                  <span>
-                    {(() => {
-                      const waitTarget = getAuthoritativeTargetEpoch(crossing, 'reopen', now);
-                      const waitSec = waitTarget !== null ? calculateRemainingSeconds(waitTarget, now) : (crossing.remainingWaitSec || 0);
-                      const closeTarget = getAuthoritativeTargetEpoch(crossing, 'closure', now);
-                      const closeSec = closeTarget !== null ? calculateRemainingSeconds(closeTarget, now) : (crossing.timeToNextClosureSec || 0);
-                      const { minutes: closeMin, seconds: closeRem } = formatCountdown(closeSec);
-                      const { minutes: waitMin, seconds: waitRem } = formatCountdown(waitSec);
-
-                      if (isClosed) {
-                        return waitSec > 0
-                          ? `Expected reopen ~${waitSec > 60 ? `${waitMin}m ${waitRem}s` : `${waitSec}s`}`
-                          : 'Gate closed';
-                      }
-                      if (isApproaching && (closeTarget !== null || crossing.countdownAvailable) && closeSec > 0) {
-                        return `Closure expected in ~${closeSec > 60 ? `${closeMin}m ${closeRem}s` : `${closeSec}s`}`;
-                      }
-                      if (isUnknown) {
-                        return 'Status unconfirmed (no train telemetry)';
-                      }
-                      return 'Clear passage';
-                    })()}
-                  </span>
-                </div>
+                {/* Train status & timing */}
+                {timing.activeTrain ? (
+                  <div style={{ fontSize: '11px', color: 'var(--accent-cyan)', marginTop: '8px', display: 'flex', alignItems: 'center', gap: '5px', fontWeight: 600 }}>
+                    <Train size={12} color="var(--accent-cyan)" />
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      #{timing.activeTrain.trainNumber} {timing.activeTrain.trainName} • {timing.activeTrain.timingText || timing.activeTrain.speedText}
+                    </span>
+                  </div>
+                ) : (
+                  <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '8px', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                    <Clock size={12} color="var(--status-open)" />
+                    <span>
+                      {timing.isClosedNow ? (
+                        `Expected reopen ${timing.reopeningTimeStr ? `at ${timing.reopeningTimeStr}` : 'shortly'}${timing.reopenCountdownText ? ` (${timing.reopenCountdownText})` : ''}`
+                      ) : timing.isClosingSoon ? (
+                        `Closure expected ${timing.closingCountdownText || 'soon'}`
+                      ) : timing.isTimingUnavailable ? (
+                        'Timing unconfirmed'
+                      ) : (
+                        'Roadway Open · Corridor Clear'
+                      )}
+                    </span>
+                  </div>
+                )}
               </div>
             );
           });

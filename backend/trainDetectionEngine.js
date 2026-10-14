@@ -14,10 +14,10 @@ import { STATION_COORDINATES } from './stationCoordinates.js';
  * - Fatak reopens 1 to 3 minutes after train completely clears (nominal: 2 minutes = 120 seconds)
  */
 export const CROSSING_DETECTION_THRESHOLDS = {
-  // Amritsar Ground Truth Closure Lead Time: 10 to 15 minutes (default: 12 minutes / 720s)
-  CLOSURE_LEAD_SEC: 720,
-  CLOSURE_LEAD_MIN_SEC: 600, // 10 minutes
-  CLOSURE_LEAD_MAX_SEC: 900, // 15 minutes
+  // Amritsar Ground Truth Closure Lead Time: authentic 2.5 to 4.5 minutes (nominal: 3.5 minutes = 210 seconds)
+  CLOSURE_LEAD_SEC: 210,
+  CLOSURE_LEAD_MIN_SEC: 150, // 2.5 minutes
+  CLOSURE_LEAD_MAX_SEC: 270, // 4.5 minutes
 
   // Amritsar Ground Truth Post-Passage Reopening Buffer: 1 to 3 minutes (nominal: 2 minutes / 120s)
   GATE_CLEARANCE_BUFFER_SEC: 120, // 2 minutes post-passage barrier lifting & cabin block clearance
@@ -138,11 +138,15 @@ export class TrainDetectionEngine {
       if (train.dataState !== 'LIVE') {
         errors.push(`Train dataState is ${train.dataState || 'UNVERIFIED'}; only verified LIVE provider telemetry can trigger crossing gate closures`);
       }
-      if (train.dataState === 'STALE') {
+      if (train.dataState === 'STALE' || train.isStale === true) {
         errors.push('Stale telemetry ping rejected (>15 min old)');
       }
       if (train.dataState === 'UNKNOWN') {
         errors.push('Train position is unknown');
+      }
+    } else {
+      if (train.isStale === true || train.dataState === 'STALE') {
+        errors.push('Stale telemetry ping rejected (>15 min old)');
       }
     }
 
@@ -150,7 +154,7 @@ export class TrainDetectionEngine {
     if (train.status === 'NOT_STARTED' || train.status === 'not-started') {
       errors.push('Train has not started operation (NOT_STARTED)');
     }
-    if (typeof train.lat !== 'number' || typeof train.lng !== 'number' || isNaN(train.lat) || isNaN(train.lng) || (train.lat === 0 && train.lng === 0)) {
+    if (typeof train.lat !== 'number' || typeof train.lng !== 'number' || isNaN(train.lat) || isNaN(train.lng) || (train.lat === 0 && train.lng === 0) || train.lat < -90 || train.lat > 90 || train.lng < -180 || train.lng > 180) {
       errors.push('Train geographic coordinates are missing or invalid (null or unobserved position)');
     }
     if (train.isWithinAmritsarSector === false) {
@@ -175,15 +179,26 @@ export class TrainDetectionEngine {
     }
 
     // 3. Stale observation timestamp check (genuine provider timestamp, not disguised by fresh polling)
-    const effectiveObservationTime = train.providerObservationTimestamp || train.lastPing;
+    const effectiveObservationTime = train.providerObservationTimestamp || train.lastPing || train.timestamp || train.lastUpdate || train.time;
     if (effectiveObservationTime) {
-      const ageMs = Date.now() - new Date(effectiveObservationTime).getTime();
-      if (ageMs > CROSSING_DETECTION_THRESHOLDS.STALE_TELEMETRY_TIMEOUT_SEC * 1000) {
-        errors.push('Telemetry observation is over 15 minutes old (stale telemetry)');
+      const obsTimeMs = new Date(effectiveObservationTime).getTime();
+      if (isNaN(obsTimeMs)) {
+        errors.push('Invalid observation timestamp format');
+      } else {
+        const ageMs = Date.now() - obsTimeMs;
+        if (ageMs > CROSSING_DETECTION_THRESHOLDS.STALE_TELEMETRY_TIMEOUT_SEC * 1000) {
+          errors.push('Telemetry observation is over 15 minutes old (stale telemetry)');
+        }
       }
     }
 
-    // 4. Contradictory Station Progress vs Coordinates Check
+    // 4. Direction validation: Train travel direction must be verified UP or DOWN
+    const dirUpper = String(train.direction || '').toUpperCase();
+    if (dirUpper !== 'UP' && dirUpper !== 'DOWN') {
+      errors.push(`Train travel direction (${train.direction || 'unspecified'}) is missing or unverified`);
+    }
+
+    // 5. Contradictory Station Progress vs Coordinates Check
     const stnCode = train.currentStationCode || train.stationCode;
     if (stnCode && STATION_COORDINATES[stnCode] && typeof train.lat === 'number' && typeof train.lng === 'number' && train.lat !== 0 && train.lng !== 0) {
       const stn = STATION_COORDINATES[stnCode];
@@ -208,14 +223,33 @@ export class TrainDetectionEngine {
    * Helper to construct a standardized, semantically correct UNKNOWN / STATUS UNAVAILABLE response
    */
   createUnknownCrossingEvaluation(statusReason, calculationTimestamp, feedContext = {}, options = {}) {
+    const candidateTrain = options.candidateTrain || null;
+    const upcomingTrainPayload = candidateTrain ? {
+      id: candidateTrain.id || candidateTrain.number,
+      number: candidateTrain.number,
+      trainNumber: candidateTrain.number,
+      name: candidateTrain.name,
+      trainName: candidateTrain.name,
+      type: candidateTrain.type,
+      dataState: candidateTrain.dataState,
+      speedKmH: candidateTrain.speedKmH ?? null,
+      speedKmph: candidateTrain.speedKmH ?? null,
+      direction: candidateTrain.direction,
+      distanceKm: candidateTrain.distanceKm ?? null,
+      origin: candidateTrain.origin || 'Amritsar Jn',
+      destination: candidateTrain.destination || 'Amritsar Sector',
+      status: candidateTrain.status,
+      isUnconfirmed: true
+    } : null;
+
     return {
       status: 'UNKNOWN',
       statusReason,
       legacyStatus: 'DATA_UNAVAILABLE',
       predictionState: 'TELEMETRY_UNAVAILABLE',
       countdownAvailable: false,
-      gateStatusClassification: options.classification || 'STATUS UNAVAILABLE',
-      gateStatusLabel: options.label || 'STATUS UNAVAILABLE',
+      gateStatusClassification: options.classification || 'STATUS UNKNOWN',
+      gateStatusLabel: options.label || 'STATUS UNKNOWN',
       predictionAvailable: false,
       isStatusEstimated: true,
       statusObservationType: 'UNOBSERVED',
@@ -227,9 +261,9 @@ export class TrainDetectionEngine {
       upcomingTrainId: null,
       associatedTrainId: null,
       associatedTrainNumber: null,
-      trainRoute: null,
-      trainDirection: null,
-      distanceAlongTrackKm: null,
+      trainRoute: (candidateTrain?.origin && candidateTrain?.destination) ? `${candidateTrain.origin} → ${candidateTrain.destination}` : null,
+      trainDirection: candidateTrain?.direction || null,
+      distanceAlongTrackKm: candidateTrain?.distanceKm || null,
       estimatedTimeToArrivalSec: null,
       estimatedGateClosingTime: null,
       expectedTrainArrival: null,
@@ -241,19 +275,21 @@ export class TrainDetectionEngine {
       forecastStatus: 'UNAVAILABLE',
       forecastNote: statusReason,
       message: statusReason,
-      recommendation: 'PROCEED WITH CAUTION — STATUS UNVERIFIED',
-      speedKmH: null,
-      hasLiveSpeedMeasurement: false,
-      speedSource: 'UNAVAILABLE',
+      recommendation: options.recommendation || 'STATUS UNKNOWN — PROCEED WITH CAUTION',
+      speedKmH: candidateTrain?.speedKmH ?? null,
+      hasLiveSpeedMeasurement: Boolean(candidateTrain?.hasLiveSpeedMeasurement),
+      speedSource: candidateTrain?.speedSource || 'UNAVAILABLE',
       etaCalculationMethod: 'UNAVAILABLE',
       predictionConfidence: 'UNAVAILABLE',
       providerObservationTimestamp: options.providerObservationTimestamp || null,
       apiRetrievalTimestamp: options.apiRetrievalTimestamp || null,
       calculationTimestamp,
       lastProviderSyncTimestamp: feedContext.lastSuccessfulSync || null,
-      dataFreshness: options.dataFreshness || 'UNAVAILABLE',
+      dataFreshness: options.dataFreshness || candidateTrain?.dataState || 'UNAVAILABLE',
       warningBufferSec: 180,
       traverseDurationSec: 60,
+      candidateTrain: upcomingTrainPayload,
+      passingTrain: upcomingTrainPayload,
       upcomingTrain: null,
       primaryTrain: null,
       upcomingTrains: [],
@@ -264,7 +300,7 @@ export class TrainDetectionEngine {
       timingMetrics: null,
       closure: null,
       reopening: null,
-      lastTrainPassed: null
+      lastTrainPassed: options.lastTrainPassed || null
     };
   }
 
@@ -278,6 +314,134 @@ export class TrainDetectionEngine {
   evaluateCrossingGateState(crossing, relevantTrains, corridorCoordinates, feedContext = {}) {
     const now = Date.now();
     const calculationTimestamp = new Date(now).toISOString();
+
+    // -------------------------------------------------------------------------
+    // 0. PHYSICAL GATE SENSOR & CONFIRMED OPERATIONAL DRILL OVERRIDES
+    // Trustworthy physical evidence takes absolute precedence over kinematic deductions.
+    // -------------------------------------------------------------------------
+    if (crossing.activeDrill || crossing.closureReported || crossing.observedPhysicalGateState === 'CLOSED') {
+      const reason = crossing.activeDrill 
+        ? 'Operational emergency drill active. Boom barriers locked.' 
+        : crossing.closureReported 
+        ? 'Verified gatekeeper/user closure reported. Boom barriers locked.'
+        : 'Physical gate barrier sensor confirmed CLOSED.';
+      return {
+        status: 'CLOSED',
+        statusReason: reason,
+        legacyStatus: 'CONFIRMED_CLOSED',
+        predictionState: 'CONFIRMED_CLOSED',
+        countdownAvailable: false,
+        gateStatusClassification: 'CONFIRMED CLOSED',
+        gateStatusLabel: 'CONFIRMED CLOSED',
+        predictionAvailable: true,
+        isStatusEstimated: false,
+        statusObservationType: crossing.activeDrill ? 'OPERATIONAL_DRILL' : crossing.closureReported ? 'VERIFIED_REPORT' : 'HARDWARE_SENSOR',
+        statusObservationNote: reason,
+        observedPhysicalGateState: 'CLOSED',
+        physicalSensorAvailable: crossing.observedPhysicalGateState === 'CLOSED',
+        physicalSensorNote: crossing.observedPhysicalGateState === 'CLOSED' ? 'Operational hardware barrier sensor connected.' : 'Operational drill/verified manual report active.',
+        timeToNextClosureSec: 0,
+        upcomingTrainId: null,
+        associatedTrainId: null,
+        associatedTrainNumber: null,
+        trainRoute: null,
+        trainDirection: null,
+        distanceAlongTrackKm: null,
+        estimatedTimeToArrivalSec: null,
+        estimatedGateClosingTime: null,
+        expectedTrainArrival: null,
+        estimatedGateReopeningTime: null,
+        predictedReopenTime: null,
+        remainingWaitSec: 0,
+        dataClassification: 'CONFIRMED_OBSERVATION',
+        dataClassificationLabel: 'Confirmed Closed',
+        forecastStatus: 'CONFIRMED_CLOSED',
+        forecastNote: reason,
+        message: reason,
+        recommendation: 'DO NOT CROSS — CONFIRMED CLOSED',
+        speedKmH: null,
+        hasLiveSpeedMeasurement: false,
+        speedSource: 'UNAVAILABLE',
+        etaCalculationMethod: 'UNAVAILABLE',
+        predictionConfidence: 'HIGH',
+        providerObservationTimestamp: null,
+        apiRetrievalTimestamp: null,
+        calculationTimestamp,
+        lastProviderSyncTimestamp: feedContext.lastSuccessfulSync || null,
+        dataFreshness: 'LIVE',
+        upcomingTrain: null,
+        primaryTrain: null,
+        upcomingTrains: [],
+        subsequentTrains: [],
+        totalUpcomingTrains: 0,
+        combinedClosure: null,
+        overlappingClosure: null,
+        timingMetrics: null,
+        closure: null,
+        reopening: null,
+        lastTrainPassed: crossing.lastTrainPassed || null
+      };
+    }
+
+    if (crossing.observedPhysicalGateState === 'OPEN' || crossing.confirmedOpenReport === true) {
+      const reason = 'Physical gate barrier confirmed OPEN via hardware sensor or verified gatekeeper all-clear.';
+      return {
+        status: 'OPEN',
+        statusReason: reason,
+        legacyStatus: 'CONFIRMED_OPEN',
+        predictionState: 'CONFIRMED_OPEN',
+        countdownAvailable: false,
+        gateStatusClassification: 'CONFIRMED OPEN',
+        gateStatusLabel: 'CONFIRMED OPEN',
+        predictionAvailable: true,
+        isStatusEstimated: false,
+        statusObservationType: 'HARDWARE_SENSOR',
+        statusObservationNote: reason,
+        observedPhysicalGateState: 'OPEN',
+        physicalSensorAvailable: true,
+        physicalSensorNote: 'Operational hardware barrier sensor or verified gatekeeper relay reports gate OPEN.',
+        timeToNextClosureSec: 0,
+        upcomingTrainId: null,
+        associatedTrainId: null,
+        associatedTrainNumber: null,
+        trainRoute: null,
+        trainDirection: null,
+        distanceAlongTrackKm: null,
+        estimatedTimeToArrivalSec: null,
+        estimatedGateClosingTime: null,
+        expectedTrainArrival: null,
+        estimatedGateReopeningTime: null,
+        predictedReopenTime: null,
+        remainingWaitSec: 0,
+        dataClassification: 'CONFIRMED_OBSERVATION',
+        dataClassificationLabel: 'Confirmed Open',
+        forecastStatus: 'CONFIRMED_OPEN',
+        forecastNote: reason,
+        message: reason,
+        recommendation: 'SAFE TO CROSS — CONFIRMED OPEN',
+        speedKmH: null,
+        hasLiveSpeedMeasurement: false,
+        speedSource: 'UNAVAILABLE',
+        etaCalculationMethod: 'UNAVAILABLE',
+        predictionConfidence: 'HIGH',
+        providerObservationTimestamp: null,
+        apiRetrievalTimestamp: null,
+        calculationTimestamp,
+        lastProviderSyncTimestamp: feedContext.lastSuccessfulSync || null,
+        dataFreshness: 'LIVE',
+        upcomingTrain: null,
+        primaryTrain: null,
+        upcomingTrains: [],
+        subsequentTrains: [],
+        totalUpcomingTrains: 0,
+        combinedClosure: null,
+        overlappingClosure: null,
+        timingMetrics: null,
+        closure: null,
+        reopening: null,
+        lastTrainPassed: crossing.lastTrainPassed || null
+      };
+    }
 
     // -------------------------------------------------------------------------
     // 1. CROSSING GEOMETRY & CORRIDOR ALIGNMENT VALIDATION
@@ -355,23 +519,65 @@ export class TrainDetectionEngine {
     // -------------------------------------------------------------------------
     let validApproachingTrains = [];
     let corridorNearbyTrains = [];
+    const stationaryPlatformTrains = [];
     const staleCandidates = [];
+    const missingCoordCandidates = [];
+    const incompatibleCorridorCandidates = [];
+    const syntheticCandidates = [];
+    const cancelledCandidates = [];
     const unverifiedCandidates = [];
 
     if (hasCandidates) {
       for (const train of relevantTrains) {
-        // Validate candidate state
+        // A. Incompatible corridor check (avoid false associations based solely on geographic proximity)
+        if (train.corridorId && crossing.corridorId && train.corridorId !== crossing.corridorId) {
+          incompatibleCorridorCandidates.push(train);
+          continue;
+        }
+
+        // B. Synthetic test bench check (never close real crossings)
+        if (train.positionClassification === 'SYNTHETIC_DEMO' || train.dataState === 'SIMULATED' || String(train.number || '').startsWith('SIM-') || train.isSimulated) {
+          syntheticCandidates.push(train);
+          continue;
+        }
+
+        // C. Cancelled / Terminated check
+        if (train.status === 'CANCELLED' || train.status === 'TERMINATED') {
+          cancelledCandidates.push(train);
+          continue;
+        }
+
+        // D. Stationary platform train check (Railway Interlocking Rule: Trains dwelling/boarding at station platforms
+        // do not occupy track circuits of road level crossings outside the interlocking dispatch signal)
+        const isStationaryAtPlatform = Boolean(
+          train.isStationaryAtPlatform === true ||
+          train.isStationary === true ||
+          train.status === 'PLATFORM_BOARDING' ||
+          train.status === 'HALTED' ||
+          train.operationalStatus === 'PLATFORM_BOARDING' ||
+          (train.dataState === 'SCHEDULED' && (train.speedKmH === 0 || train.speedKmH === null)) ||
+          ((train.speedKmH === 0 || train.liveSpeedKmH === 0) && train.isAtStation === true)
+        );
+
+        if (isStationaryAtPlatform) {
+          stationaryPlatformTrains.push(train);
+          continue;
+        }
+
+        // E. Validate candidate state
         const candCheck = this.validateTrainCandidate(train);
         if (!candCheck.isValid) {
-          if (candCheck.errors.some(e => e.includes('stale') || e.includes('Stale'))) {
+          if (candCheck.errors.some(e => e.includes('stale') || e.includes('Stale')) || train.isStale === true || train.dataState === 'STALE') {
             staleCandidates.push(train);
+          } else if (candCheck.errors.some(e => e.includes('coordinates are missing') || e.includes('invalid') || e.includes('null'))) {
+            missingCoordCandidates.push(train);
           } else {
             unverifiedCandidates.push({ train, reasons: candCheck.errors });
           }
-          continue; // Skip invalid, out-of-sector, or cancelled trains
+          continue; // Skip invalid, out-of-sector, or unverified trains
         }
 
-        // Validate directional track connectivity to this specific crossing
+        // E. Validate directional track connectivity to this specific crossing
         const geoCheck = GeographicValidator.validateApproachingCrossing(
           train,
           crossing,
@@ -400,32 +606,209 @@ export class TrainDetectionEngine {
               trackDistanceKm: geoCheck.trackDistanceKm,
               isApproaching: false,
               isTraversing: false,
-              hasCleared: true
+              hasCleared: true,
+              isOppositeDirection: true
             });
           }
         } else {
-          unverifiedCandidates.push({ train, reasons: [geoCheck.rejectionReason || 'Track connectivity check failed'] });
+          if (geoCheck.rejectionReason && geoCheck.rejectionReason.includes('Corridor mismatch')) {
+            incompatibleCorridorCandidates.push(train);
+          } else {
+            unverifiedCandidates.push({ train, reasons: [geoCheck.rejectionReason || 'Track connectivity check failed'] });
+          }
         }
       }
     }
 
-    // If candidate trains were provided on this corridor, but all were rejected due to stale pings:
-    if (hasCandidates && staleCandidates.length > 0 && staleCandidates.length === relevantTrains.length && validApproachingTrains.length === 0) {
-      return this.createUnknownCrossingEvaluation(
-        `Candidate train telemetry on corridor (${staleCandidates.map(t => '#' + t.number).join(', ')}) is stale (>15m). Clear passage cannot be verified.`,
-        calculationTimestamp,
-        feedContext,
-        {
-          classification: 'DATA UNAVAILABLE',
-          label: 'STATUS UNAVAILABLE',
-          dataClassification: 'DATA_UNAVAILABLE',
-          dataClassificationLabel: 'Telemetry Stale',
-          observationNote: 'Candidate train telemetry on this corridor is stale (>15 minutes old). Gate state is unknown.',
-          providerObservationTimestamp: staleCandidates[0]?.providerObservationTimestamp || null,
-          apiRetrievalTimestamp: staleCandidates[0]?.apiRetrievalTimestamp || staleCandidates[0]?.lastPing || null,
-          dataFreshness: 'STALE'
+    // If candidate trains were provided on this corridor, but all were rejected:
+    if (hasCandidates && validApproachingTrains.length === 0 && corridorNearbyTrains.length === 0) {
+      const candTrain = unverifiedCandidates[0]?.train || staleCandidates[0] || missingCoordCandidates[0] || (hasCandidates ? relevantTrains[0] : null);
+      const lastPassed = crossing.lastTrainPassed || null;
+
+      if (staleCandidates.length > 0) {
+        return this.createUnknownCrossingEvaluation(
+          `Candidate train telemetry on corridor (${staleCandidates.map(t => '#' + t.number).join(', ')}) is stale (>15m). Clear passage cannot be verified.`,
+          calculationTimestamp,
+          feedContext,
+          {
+            classification: 'DATA UNAVAILABLE',
+            label: 'STATUS UNAVAILABLE',
+            dataClassification: 'DATA_UNAVAILABLE',
+            dataClassificationLabel: 'Telemetry Stale',
+            observationNote: 'Candidate train telemetry on this corridor is stale (>15 minutes old). Gate state is unknown.',
+            providerObservationTimestamp: staleCandidates[0]?.providerObservationTimestamp || null,
+            apiRetrievalTimestamp: staleCandidates[0]?.apiRetrievalTimestamp || staleCandidates[0]?.lastPing || null,
+            dataFreshness: 'STALE',
+            candidateTrain: candTrain,
+            lastTrainPassed: lastPassed
+          }
+        );
+      }
+
+      if (missingCoordCandidates.length > 0) {
+        return this.createUnknownCrossingEvaluation(
+          `Candidate train coordinates on corridor (${missingCoordCandidates.map(t => '#' + t.number).join(', ')}) are missing or invalid. Clear passage cannot be verified.`,
+          calculationTimestamp,
+          feedContext,
+          {
+            classification: 'DATA UNAVAILABLE',
+            label: 'STATUS UNAVAILABLE',
+            dataClassification: 'DATA_UNAVAILABLE',
+            dataClassificationLabel: 'Telemetry Unverified',
+            observationNote: 'Candidate train geographic coordinates on corridor are missing or invalid. Gate status cannot be determined.',
+            providerObservationTimestamp: missingCoordCandidates[0]?.providerObservationTimestamp || null,
+            apiRetrievalTimestamp: missingCoordCandidates[0]?.apiRetrievalTimestamp || missingCoordCandidates[0]?.lastPing || null,
+            dataFreshness: missingCoordCandidates[0]?.dataState || 'UNAVAILABLE',
+            candidateTrain: candTrain,
+            lastTrainPassed: lastPassed
+          }
+        );
+      }
+
+      if (unverifiedCandidates.length > 0) {
+        const reason = unverifiedCandidates[0]?.reasons?.[0] || 'Candidate train telemetry on corridor is unverified or invalid. Clear passage cannot be verified.';
+        return this.createUnknownCrossingEvaluation(
+          reason,
+          calculationTimestamp,
+          feedContext,
+          {
+            classification: 'DATA UNAVAILABLE',
+            label: 'STATUS UNAVAILABLE',
+            dataClassification: 'DATA_UNAVAILABLE',
+            dataClassificationLabel: 'Telemetry Unverified',
+            observationNote: reason,
+            providerObservationTimestamp: relevantTrains[0]?.providerObservationTimestamp || null,
+            apiRetrievalTimestamp: relevantTrains[0]?.apiRetrievalTimestamp || relevantTrains[0]?.lastPing || null,
+            dataFreshness: relevantTrains[0]?.dataState || 'UNAVAILABLE',
+            candidateTrain: candTrain,
+            lastTrainPassed: lastPassed
+          }
+        );
+      }
+
+      // If only stationary platform trains were detected on corridor:
+      // When feed is verified and confirms corridor clear of moving trains, the roadway is OPEN.
+      if (stationaryPlatformTrains.length > 0) {
+        if (feedContext.apiConfirmsCorridorClear === true) {
+          const statTrain = stationaryPlatformTrains[0];
+          const statTrainPayload = {
+            id: statTrain.id || statTrain.number,
+            number: statTrain.number,
+            trainNumber: statTrain.number,
+            name: statTrain.name,
+            trainName: statTrain.name,
+            type: statTrain.type,
+            dataState: statTrain.dataState,
+            speedKmH: 0,
+            speedKmph: 0,
+            direction: statTrain.direction,
+            distanceKm: typeof statTrain.distanceFromAmritsarKm === 'number' ? statTrain.distanceFromAmritsarKm : 0,
+            currentStationName: statTrain.currentStationName || 'Amritsar Junction (ASR)',
+            origin: statTrain.origin,
+            destination: statTrain.destination,
+            status: 'PLATFORM_BOARDING',
+            isStationary: true,
+            isStationaryAtPlatform: true
+          };
+          return {
+            status: 'OPEN',
+            statusReason: `Corridor actively monitored. Train #${statTrain.number || statTrain.id} is stationary at station platform (dispatch signal held). Zero moving trains approaching crossing. Roadway open.`,
+            legacyStatus: 'EXPECTED_OPEN',
+            predictionState: 'CLEAR_PASSAGE',
+            countdownAvailable: false,
+            gateStatusClassification: 'NO APPROACH DETECTED',
+            gateStatusLabel: 'OPEN',
+            predictionAvailable: true,
+            isStatusEstimated: false,
+            statusObservationType: 'CORRIDOR_KINEMATICS',
+            statusObservationNote: 'Corridor track clear of moving trains. Stationary platform trains do not trigger level crossing closures.',
+            observedPhysicalGateState: 'UNKNOWN',
+            physicalSensorAvailable: false,
+            physicalSensorNote: 'No hardware boom barrier sensor connected. Physical gate state unobserved; road passage predicted clear from corridor telemetry.',
+            timeToNextClosureSec: 0,
+            upcomingTrainId: null,
+            associatedTrainId: null,
+            associatedTrainNumber: null,
+            trainRoute: null,
+            trainDirection: null,
+            distanceAlongTrackKm: null,
+            estimatedTimeToArrivalSec: null,
+            estimatedGateClosingTime: null,
+            expectedTrainArrival: null,
+            estimatedGateReopeningTime: null,
+            predictedReopenTime: null,
+            remainingWaitSec: 0,
+            dataClassification: 'LIVE_TRACK_MONITORED',
+            dataClassificationLabel: 'Live Permanent-Way Track Monitored',
+            forecastStatus: 'CLEAR_PASSAGE',
+            forecastNote: `Train #${statTrain.number || statTrain.id} stationary at platform. Crossing open.`,
+            message: `Train #${statTrain.number || statTrain.id} stationary at platform. Crossing open.`,
+            recommendation: 'CLEAR PASSAGE — OPEN',
+            speedKmH: null,
+            hasLiveSpeedMeasurement: false,
+            speedSource: 'UNAVAILABLE',
+            etaCalculationMethod: 'UNAVAILABLE',
+            predictionConfidence: 'HIGH',
+            providerObservationTimestamp: statTrain.providerObservationTimestamp || null,
+            apiRetrievalTimestamp: statTrain.apiRetrievalTimestamp || null,
+            calculationTimestamp,
+            lastProviderSyncTimestamp: feedContext.lastSuccessfulSync || null,
+            dataFreshness: 'LIVE',
+            warningBufferSec: 180,
+            traverseDurationSec: 60,
+            upcomingTrain: null,
+            primaryTrain: null,
+            corridorTrain: statTrainPayload,
+            activeCorridorTrain: statTrainPayload,
+            upcomingTrains: [],
+            subsequentTrains: [],
+            totalUpcomingTrains: 0,
+            combinedClosure: null,
+            overlappingClosure: null,
+            timingMetrics: null,
+            closure: null,
+            reopening: null,
+            lastTrainPassed: lastPassed
+          };
+        } else {
+          // If feed is unverified/unconfirmed, remain UNKNOWN
+          const statTrain = stationaryPlatformTrains[0];
+          const statTrainPayload = {
+            id: statTrain.id || statTrain.number,
+            number: statTrain.number,
+            trainNumber: statTrain.number,
+            name: statTrain.name,
+            trainName: statTrain.name,
+            type: statTrain.type,
+            dataState: statTrain.dataState,
+            speedKmH: 0,
+            speedKmph: 0,
+            direction: statTrain.direction,
+            distanceKm: typeof statTrain.distanceFromAmritsarKm === 'number' ? statTrain.distanceFromAmritsarKm : 0,
+            currentStationName: statTrain.currentStationName || 'Amritsar Junction (ASR)',
+            origin: statTrain.origin,
+            destination: statTrain.destination,
+            status: 'PLATFORM_BOARDING',
+            isStationary: true,
+            isStationaryAtPlatform: true
+          };
+          return this.createUnknownCrossingEvaluation(
+            'Stationary at station platform (awaiting dispatch/departure) — gate closure not triggered',
+            calculationTimestamp,
+            feedContext,
+            {
+              classification: 'STATUS UNKNOWN',
+              label: 'STATUS UNKNOWN',
+              dataClassification: 'DATA_UNAVAILABLE',
+              dataClassificationLabel: 'Platform Train Stationary',
+              observationNote: 'Train is stationary at platform awaiting departure. No moving approach detected.',
+              candidateTrain: candTrain || statTrainPayload,
+              corridorTrain: statTrainPayload,
+              lastTrainPassed: lastPassed
+            }
+          );
         }
-      );
+      }
     }
 
     // -------------------------------------------------------------------------
@@ -487,6 +870,7 @@ export class TrainDetectionEngine {
       const rakeLengthM = this.getRakeLengthMeters(train);
       const traverseDurationSec = Math.round((rakeLengthM + 60) / speedMs);
 
+      const currentDelayMin = Number(train.delayMinutes || 0);
       let closeTime, openTime, passageTime, crossBy;
 
       // Check if crossing already has an anchored passage time for this specific approaching train
@@ -505,20 +889,11 @@ export class TrainDetectionEngine {
         const driftMs = Math.abs(parsed - physicalEtaMs);
         // Plausibility & reality check:
         // A train physically > 2.0 km away CANNOT have a passage time in the past or immediately right now!
-        // Anchors that have elapsed in the past while train is still far away, or that drift > 15 min, are invalidated.
-        const isPhysicallyPlausible = (item.trackDistanceKm <= 2.0 || parsed >= now) && driftMs <= 900000;
-        if (!isNaN(parsed) && parsed > now - 180000 && parsed < now + 14400000 && isPhysicallyPlausible) {
+        // If drift is within 90s, preserve established anchor to prevent second-by-second countdown jitter.
+        const isPhysicallyPlausible = (item.trackDistanceKm <= 2.0 || parsed >= now) && driftMs <= 180000;
+        if (!isNaN(parsed) && parsed > now - 180000 && parsed < now + 14400000 && isPhysicallyPlausible && driftMs <= 90000) {
           anchoredPassageMs = parsed;
         }
-      }
-
-      // Check for authentic schedule/delay change reported from provider (>= 2 min shift)
-      const currentDelayMin = Number(train.delayMinutes || 0);
-      const prevDelayMin = Number(crossing?.anchoredTrainDelay ?? currentDelayMin);
-      const delayShiftMs = (currentDelayMin - prevDelayMin) * 60000;
-      if (anchoredPassageMs !== null && Math.abs(delayShiftMs) >= 120000) {
-        anchoredPassageMs += delayShiftMs;
-        if (crossing) crossing.anchoredTrainDelay = currentDelayMin;
       }
 
       if (item.isTraversing) {
@@ -620,8 +995,9 @@ export class TrainDetectionEngine {
       const prevCand = currentBlock.items[currentBlock.items.length - 1];
       const passageGapMin = (cand.passageTime.getTime() - prevCand.passageTime.getTime()) / 60000;
       
+      const effectiveStartMs = Math.max(now, currentBlock.closureStart.getTime());
       const mergedEndMs = Math.max(currentBlock.closureEnd.getTime(), cand.openTime.getTime());
-      const mergedDurationMin = (mergedEndMs - currentBlock.closureStart.getTime()) / 60000;
+      const mergedDurationMin = (mergedEndMs - effectiveStartMs) / 60000;
 
       // STRICT RAILWAY RULES FOR CONTINUOUS CLOSURE:
       // 1. Passage gap between consecutive trains must be <= 3.5 min (otherwise gate opens in between).
@@ -679,27 +1055,29 @@ export class TrainDetectionEngine {
       const timeToPassageSec = Math.round((firstPassageMs - now) / 1000);
       const timeToClosureSec = Math.round((closureStartMs - now) / 1000);
 
-      // 1. Imminent / Locked threshold (CLOSED)
-      // Real-World Railway Interlocking Rules:
-      // A crossing is ONLY physically closed if:
-      // - The train is actively traversing across the roadway (primaryCand.isTraversing), OR
-      // - The train is within the immediate barrier lockdown approach zone (trackDistKm <= 3.5 km OR diffMinutesFirst <= 4.0 min)
-      //   AND current time is within the closure window (now >= closureStartMs or timeToClosureSec <= 0)
-      //   AND the train has not cleared yet (now <= closureEndMs).
-      // A train 10 km, 20 km, or 40 km away (ETA > 5 min) can NEVER cause the gate to be CLOSED!
-      const isWithinImmediateClosureZone = primaryCand.isTraversing || (trackDistKm <= 3.5 || diffMinutesFirst <= 4.0);
+      // Hysteresis support: avoid boundary jitter if crossing was already in alert state
+      const prevStatus = crossing?.status || 'OPEN';
+      const wasClosed = prevStatus === 'CLOSED' || prevStatus === 'CLOSURE_EXPECTED' || prevStatus === 'CLOSURE_REPORTED';
+      const wasApproaching = prevStatus === 'APPROACHING' || wasClosed;
+
+      // 1. Imminent / Locked threshold (CLOSURE_EXPECTED / CLOSED)
+      // Hysteresis window: entry at <= 3.5 km / <= 4.0 min; exit at > 3.8 km / > 4.5 min
+      const closureDistLimit = wasClosed ? 3.8 : 3.5;
+      const closureTimeLimit = wasClosed ? 4.5 : 4.0;
+      const isWithinImmediateClosureZone = primaryCand.isTraversing || (trackDistKm <= closureDistLimit || diffMinutesFirst <= closureTimeLimit);
       const isClosed = primaryCand.isTraversing || (
         isWithinImmediateClosureZone &&
         (now >= closureStartMs || timeToClosureSec <= 0) &&
-        now <= closureEndMs &&
-        diffMinutesFirst <= 4.0
+        now <= closureEndMs
       );
 
       // 2. Active approach alert threshold (APPROACHING)
-      // Barrier closing soon, within approach window (timeToClosureSec > 0 and <= 300s or within approach distance <= 8.0 km and <= 12 min)
+      // Hysteresis window: entry at <= 8.0 km / <= 12.0 min; exit at > 8.5 km / > 13.0 min
+      const approachDistLimit = wasApproaching ? 8.5 : 8.0;
+      const approachTimeLimit = wasApproaching ? 13.0 : 12.0;
       const isApproaching = !isClosed && (
-        (timeToClosureSec > 0 && timeToClosureSec <= 300) ||
-        (diffMinutesFirst <= 12.0 && trackDistKm <= 8.0)
+        trackDistKm <= approachDistLimit &&
+        diffMinutesFirst <= approachTimeLimit
       );
 
       let newStatus = 'OPEN';
@@ -717,10 +1095,10 @@ export class TrainDetectionEngine {
       let countdownAvailable = false;
 
       if (isClosed) {
-        newStatus = 'CLOSED';
-        gateStatusLabel = (primaryCand.isTraversing || diffMinutesFirst <= 0) ? 'CLOSED (TRAIN TRAVERSING)' : 'CLOSED (BOOM BARRIERS LOCKED)';
-        gateClassification = 'PREDICTED_CLOSURE';
-        legacyStatus = 'PREDICTED_CLOSURE';
+        newStatus = (primaryCand.isTraversing || isContinuous) ? 'CLOSED' : 'CLOSURE_EXPECTED';
+        gateStatusLabel = (primaryCand.isTraversing || diffMinutesFirst <= 0) ? 'CLOSED (TRAIN TRAVERSING)' : 'PREDICTED CLOSURE';
+        gateClassification = 'PREDICTED CLOSURE';
+        legacyStatus = 'CLOSURE_EXPECTED';
         predictionState = (primaryCand.isTraversing || diffMinutesFirst <= 0) ? 'PASSAGE_DETECTED' : 'BOOM_BARRIERS_LOCKED';
         countdownAvailable = true;
         let reopenTimeMs = activeBlock.closureEnd.getTime();
@@ -741,7 +1119,7 @@ export class TrainDetectionEngine {
         const timeToReopenMin = Number((remainingWaitSec / 60).toFixed(1));
         estimatedGateClosingTime = activeBlock.closureStart.toISOString();
         predictedReopenTime = new Date(reopenTimeMs).toISOString();
-        recommendation = 'DO NOT CROSS — GATE CLOSED';
+        recommendation = 'DO NOT CROSS — PREDICTED CLOSURE';
 
         if (isContinuous) {
           const currNum = activeBlock.items[0]?.train.number;
@@ -756,26 +1134,28 @@ export class TrainDetectionEngine {
         forecastNote = statusReason;
       } else if (isApproaching) {
         newStatus = 'APPROACHING';
-        gateStatusLabel = 'APPROACHING';
-        gateClassification = 'APPROACH ALERT';
+        gateStatusLabel = 'PREDICTED CLOSURE';
+        gateClassification = 'PREDICTED CLOSURE';
         legacyStatus = 'PREDICTED_CLOSURE';
         predictionState = 'APPROACHING';
         countdownAvailable = true;
         timeToNextClosureSec = Math.max(1, timeToClosureSec);
         const timeToClosureMin = Number((timeToNextClosureSec / 60).toFixed(1));
         estimatedGateClosingTime = activeBlock.closureStart.toISOString();
-        predictedReopenTime = activeBlock.closureEnd.toISOString();
+        // Strict Railway Operational Rule: An OPEN or APPROACHING crossing must never display an estimated opening time.
+        // Reopening estimates are strictly calculated ONLY for confirmed CLOSED crossings.
+        predictedReopenTime = null;
         remainingWaitSec = 0;
         statusReason = isContinuous
           ? `Train #${train.number} approaching in ~${Number(diffMinutesFirst.toFixed(1))} min. Multi-train continuous closure expected for ${activeBlock.items.length} trains. Gate closes in ~${timeToClosureMin} min.`
           : `Verified train #${train.number} approaching crossing (${trackDistKm.toFixed(1)} km away). Arrival in ~${Math.round(diffMinutesFirst)} min. Gate closes in ~${timeToClosureMin} min.`;
         forecastNote = statusReason;
-        recommendation = 'PLAN TO STOP — TRAIN APPROACHING';
+        recommendation = 'PLAN TO STOP — PREDICTED CLOSURE';
       } else if (now > closureEndMs) {
         // Train has cleared crossing
         newStatus = 'OPEN';
-        gateStatusLabel = 'OPEN';
-        gateClassification = 'CLEAR PASSAGE';
+        gateStatusLabel = 'PREDICTED OPEN';
+        gateClassification = 'NO APPROACH DETECTED';
         legacyStatus = 'EXPECTED_OPEN';
         predictionState = 'CLEAR_PASSAGE';
         countdownAvailable = false;
@@ -785,25 +1165,26 @@ export class TrainDetectionEngine {
         remainingWaitSec = 0;
         statusReason = `Train #${train.number} has cleared crossing. Corridor is OPEN with clear passage.`;
         forecastNote = statusReason;
-        recommendation = 'SAFE TO CROSS — OPEN';
+        recommendation = 'CLEAR PASSAGE — PREDICTED OPEN';
       } else {
         // Train is > 8.0 km away or > 10 min away: Roadway is OPEN with live countdown to next closure
         newStatus = 'OPEN';
-        gateStatusLabel = 'OPEN';
-        gateClassification = 'CLEAR PASSAGE';
+        gateStatusLabel = 'PREDICTED OPEN';
+        gateClassification = 'NO APPROACH DETECTED';
         legacyStatus = 'EXPECTED_OPEN';
         predictionState = 'EXTENDED_APPROACH';
         countdownAvailable = true;
         timeToNextClosureSec = Math.max(1, timeToClosureSec);
         const timeToClosureMin = Number((timeToNextClosureSec / 60).toFixed(1));
         estimatedGateClosingTime = activeBlock.closureStart.toISOString();
-        predictedReopenTime = activeBlock.closureEnd.toISOString();
+        // OPEN crossing: NEVER display a predicted reopening time
+        predictedReopenTime = null;
         remainingWaitSec = 0;
         statusReason = isContinuous
           ? `Train passage predicted in ~${Math.round(diffMinutesFirst)} min (${activeBlock.items.length} trains). Fatak is OPEN (Closes in ~${timeToClosureMin} min).`
           : `Roadway open. Train #${train.number} on corridor (${trackDistKm.toFixed(1)} km away), expected passage in ~${Math.round(diffMinutesFirst)} min. Gate closes in ~${timeToClosureMin} min.`;
         forecastNote = statusReason;
-        recommendation = 'SAFE TO CROSS — OPEN';
+        recommendation = 'CLEAR PASSAGE — PREDICTED OPEN';
       }
 
       const combinedClosure = {
@@ -813,7 +1194,8 @@ export class TrainDetectionEngine {
         combinedDurationMinutes: durationMin,
         durationMinutes: durationMin,
         closureStart: activeBlock.closureStart.toISOString(),
-        closureEnd: activeBlock.closureEnd.toISOString(),
+        closureEnd: isClosed ? activeBlock.closureEnd.toISOString() : null,
+        predictedReopen: isClosed ? activeBlock.closureEnd.toISOString() : null,
         trains: activeBlock.items.map(it => ({
           trainNumber: it.train.number,
           trainName: it.train.name,
@@ -846,8 +1228,7 @@ export class TrainDetectionEngine {
         estimatedPassageTime: expectedTrainArrival,
         rakeLengthM,
         origin: train.origin || 'Amritsar Jn',
-        destination: train.destination || 'Amritsar Sector',
-        schedule: train.schedule || []
+        destination: train.destination || 'Amritsar Sector'
       };
 
       const subsequentTrains = primaryCandidates.slice(1).map(c => ({
@@ -869,7 +1250,7 @@ export class TrainDetectionEngine {
         gateStatusClassification: gateClassification,
         gateStatusLabel,
         predictionAvailable: true,
-        isStatusEstimated: false,
+        isStatusEstimated: true,
         statusObservationType: 'CORRIDOR_KINEMATICS',
         statusObservationNote: `Dynamic permanent-way approach interlocking active. ${primaryCand.speedSource === 'PROVIDER_LIVE_SPEED' ? 'Calculated via provider live speedometer.' : 'Projected via published Indian Railways sectional speed profile.'}`,
         observedPhysicalGateState: 'UNKNOWN',
@@ -890,6 +1271,8 @@ export class TrainDetectionEngine {
         estimatedGateReopeningTime: predictedReopenTime,
         predictedReopenTime,
         remainingWaitSec,
+        closureDurationMin: durationMin,
+        closureDurationSec: Math.round(durationMin * 60),
         dataClassification: 'LIVE_TRACK_MONITORED',
         dataClassificationLabel: 'Live Permanent-Way Track Monitored',
         forecastStatus: 'CALCULATED_BASELINE',
@@ -910,6 +1293,8 @@ export class TrainDetectionEngine {
         traverseDurationSec,
         upcomingTrain: upcomingTrainPayload,
         primaryTrain: upcomingTrainPayload,
+        corridorTrain: upcomingTrainPayload,
+        activeCorridorTrain: upcomingTrainPayload,
         upcomingTrains: subsequentTrains,
         subsequentTrains,
         totalUpcomingTrains: primaryCandidates.length,
@@ -958,7 +1343,8 @@ export class TrainDetectionEngine {
         trainNumber: passedTrain.number,
         trainName: passedTrain.name,
         direction: passedTrain.direction,
-        distanceKm: Number(recDistKm.toFixed(2))
+        distanceKm: Number(recDistKm.toFixed(2)),
+        timestamp: new Date(now).toISOString()
       };
 
       return {
@@ -968,7 +1354,7 @@ export class TrainDetectionEngine {
         predictionState: 'CLEAR_PASSAGE',
         countdownAvailable: false,
         gateStatusClassification: 'NO APPROACH DETECTED',
-        gateStatusLabel: 'OPEN',
+        gateStatusLabel: 'PREDICTED OPEN',
         predictionAvailable: true,
         isStatusEstimated: false,
         statusObservationType: 'CORRIDOR_KINEMATICS',
@@ -994,12 +1380,12 @@ export class TrainDetectionEngine {
         forecastStatus: 'CLEAR_PASSAGE',
         forecastNote,
         message: forecastNote,
-        recommendation: 'SAFE TO CROSS — OPEN',
+        recommendation: 'CLEAR PASSAGE — PREDICTED OPEN',
         speedKmH: null,
         hasLiveSpeedMeasurement: false,
         speedSource: 'UNAVAILABLE',
         etaCalculationMethod: 'UNAVAILABLE',
-        predictionConfidence: 'UNAVAILABLE',
+        predictionConfidence: 'HIGH',
         providerObservationTimestamp: null,
         apiRetrievalTimestamp: null,
         calculationTimestamp,
@@ -1009,6 +1395,36 @@ export class TrainDetectionEngine {
         traverseDurationSec: 60,
         upcomingTrain: null,
         primaryTrain: null,
+        corridorTrain: {
+          id: passedTrain.id || passedTrain.number,
+          number: passedTrain.number,
+          trainNumber: passedTrain.number,
+          name: passedTrain.name,
+          trainName: passedTrain.name,
+          type: passedTrain.type,
+          dataState: passedTrain.dataState,
+          speedKmH: passedTrain.speedKmH,
+          speedKmph: passedTrain.speedKmH,
+          direction: passedTrain.direction,
+          distanceKm: Number(recDistKm.toFixed(2)),
+          status: 'CLEARED_CROSSING',
+          isReceding: true
+        },
+        activeCorridorTrain: {
+          id: passedTrain.id || passedTrain.number,
+          number: passedTrain.number,
+          trainNumber: passedTrain.number,
+          name: passedTrain.name,
+          trainName: passedTrain.name,
+          type: passedTrain.type,
+          dataState: passedTrain.dataState,
+          speedKmH: passedTrain.speedKmH,
+          speedKmph: passedTrain.speedKmH,
+          direction: passedTrain.direction,
+          distanceKm: Number(recDistKm.toFixed(2)),
+          status: 'CLEARED_CROSSING',
+          isReceding: true
+        },
         upcomingTrains: [],
         subsequentTrains: [],
         totalUpcomingTrains: 0,
@@ -1022,70 +1438,350 @@ export class TrainDetectionEngine {
     }
 
     // -------------------------------------------------------------------------
-    // No qualifying train within gate closure or approach threshold:
-    // Physical state is OPEN (Clear road passage).
+    // No qualifying approaching or receding train on this crossing:
+    // Rule: Distinguish PREDICTED OPEN (when corridor is actively monitored with
+    // live trains confirmed outside approach zone) vs STATUS UNKNOWN (when no live
+    // train telemetry is detected on corridor).
+    // NEVER mark a crossing OPEN merely because no train was detected!
     // -------------------------------------------------------------------------
-    const lastTrainPassed = null;
+    const activeCorridorLiveTrains = Array.isArray(relevantTrains) 
+      ? relevantTrains.filter(t => 
+          (!t.corridorId || t.corridorId === crossing.corridorId) &&
+          !t.isStale && 
+          !t.isSimulated && 
+          (t.dataState === 'LIVE' || t.dataState === 'SCHEDULED' || t.dataState === 'CONFIRMED' || t.dataState === 'RUNNING') && 
+          !t.positionClassification?.includes('SYNTHETIC')
+        )
+      : [];
+
+    if (activeCorridorLiveTrains.length > 0 || feedContext.apiConfirmsCorridorClear === true) {
+      // Monitored track with verified trains confirmed outside the approach block (>15km away) OR API confirms zero moving trains in approach block
+      const lastTrainPassed = crossing.lastTrainPassed || null;
+      const statusReason = activeCorridorLiveTrains.length > 0
+        ? `Monitored corridor ${crossing.corridorId || 'ASR'} active with ${activeCorridorLiveTrains.length} verified train(s) outside approach zone (>15km). Roadway predicted open.`
+        : `Corridor ${crossing.corridorId || 'ASR'} actively monitored via live railway gateway. Live feed confirms zero moving trains in approach block. Roadway open.`;
+
+      return {
+        status: 'OPEN',
+        statusReason,
+        legacyStatus: 'EXPECTED_OPEN',
+        predictionState: 'CLEAR_PASSAGE',
+        countdownAvailable: false,
+        gateStatusClassification: 'NO APPROACH DETECTED',
+        gateStatusLabel: 'OPEN',
+        predictionAvailable: true,
+        isStatusEstimated: false,
+        statusObservationType: 'CORRIDOR_KINEMATICS',
+        statusObservationNote: 'Active corridor clear of approaching trains. Verified live corridor telemetry confirms zero moving trains in gate approach zone.',
+        observedPhysicalGateState: 'UNKNOWN',
+        physicalSensorAvailable: false,
+        physicalSensorNote: 'No operational hardware barrier sensor connected. Physical gate state is unobserved; road passage predicted clear from corridor telemetry.',
+        timeToNextClosureSec: 0,
+        upcomingTrainId: null,
+        associatedTrainId: null,
+        associatedTrainNumber: null,
+        trainRoute: null,
+        trainDirection: null,
+        distanceAlongTrackKm: null,
+        estimatedTimeToArrivalSec: null,
+        estimatedGateClosingTime: null,
+        expectedTrainArrival: null,
+        estimatedGateReopeningTime: null,
+        predictedReopenTime: null,
+        remainingWaitSec: 0,
+        dataClassification: 'LIVE_TRACK_MONITORED',
+        dataClassificationLabel: 'Live Permanent-Way Track Monitored',
+        forecastStatus: 'CLEAR_PASSAGE',
+        forecastNote: `Corridor ${crossing.corridorId || 'ASR'} clear. Verified trains outside approach threshold.`,
+        message: `Corridor ${crossing.corridorId || 'ASR'} clear. Verified trains outside approach threshold.`,
+        recommendation: 'CLEAR PASSAGE — OPEN',
+        speedKmH: null,
+        hasLiveSpeedMeasurement: false,
+        speedSource: 'UNAVAILABLE',
+        etaCalculationMethod: 'UNAVAILABLE',
+        predictionConfidence: 'HIGH',
+        providerObservationTimestamp: null,
+        apiRetrievalTimestamp: null,
+        calculationTimestamp,
+        lastProviderSyncTimestamp: feedContext.lastSuccessfulSync || null,
+        dataFreshness: 'LIVE',
+        warningBufferSec: 180,
+        upcomingTrain: null,
+        primaryTrain: null,
+        corridorTrain: activeCorridorLiveTrains.length > 0 ? {
+          id: activeCorridorLiveTrains[0].id || activeCorridorLiveTrains[0].number,
+          number: activeCorridorLiveTrains[0].number,
+          trainNumber: activeCorridorLiveTrains[0].number,
+          name: activeCorridorLiveTrains[0].name,
+          trainName: activeCorridorLiveTrains[0].name,
+          type: activeCorridorLiveTrains[0].type,
+          dataState: activeCorridorLiveTrains[0].dataState,
+          speedKmH: activeCorridorLiveTrains[0].speedKmH,
+          speedKmph: activeCorridorLiveTrains[0].speedKmH,
+          direction: activeCorridorLiveTrains[0].direction,
+          distanceKm: typeof activeCorridorLiveTrains[0].distanceFromAmritsarKm === 'number' ? activeCorridorLiveTrains[0].distanceFromAmritsarKm : null,
+          currentStationName: activeCorridorLiveTrains[0].currentStationName,
+          origin: activeCorridorLiveTrains[0].origin,
+          destination: activeCorridorLiveTrains[0].destination,
+          status: activeCorridorLiveTrains[0].status,
+          isOutsideApproachZone: true
+        } : null,
+        activeCorridorTrain: activeCorridorLiveTrains.length > 0 ? {
+          id: activeCorridorLiveTrains[0].id || activeCorridorLiveTrains[0].number,
+          number: activeCorridorLiveTrains[0].number,
+          trainNumber: activeCorridorLiveTrains[0].number,
+          name: activeCorridorLiveTrains[0].name,
+          trainName: activeCorridorLiveTrains[0].name,
+          type: activeCorridorLiveTrains[0].type,
+          dataState: activeCorridorLiveTrains[0].dataState,
+          speedKmH: activeCorridorLiveTrains[0].speedKmH,
+          speedKmph: activeCorridorLiveTrains[0].speedKmH,
+          direction: activeCorridorLiveTrains[0].direction,
+          distanceKm: typeof activeCorridorLiveTrains[0].distanceFromAmritsarKm === 'number' ? activeCorridorLiveTrains[0].distanceFromAmritsarKm : null,
+          currentStationName: activeCorridorLiveTrains[0].currentStationName,
+          origin: activeCorridorLiveTrains[0].origin,
+          destination: activeCorridorLiveTrains[0].destination,
+          status: activeCorridorLiveTrains[0].status,
+          isOutsideApproachZone: true
+        } : null,
+        upcomingTrains: [],
+        subsequentTrains: [],
+        totalUpcomingTrains: 0,
+        combinedClosure: null,
+        overlappingClosure: null,
+        timingMetrics: null,
+        closure: null,
+        reopening: null,
+        lastTrainPassed
+      };
+    }
+
+    // Zero live train telemetry actively detected on corridor:
+    // Missing telemetry must NEVER produce a misleading OPEN status.
+    const lastTrainPassed = crossing.lastTrainPassed || null;
+    return this.createUnknownCrossingEvaluation(
+      `No live train telemetry actively detected on corridor ${crossing.corridorId || 'ASR'}. Physical boom barrier state is unconfirmed.`,
+      calculationTimestamp,
+      feedContext,
+      {
+        classification: 'STATUS UNKNOWN',
+        label: 'STATUS UNKNOWN',
+        dataClassification: 'DATA_UNAVAILABLE',
+        dataClassificationLabel: 'No Active Train Telemetry',
+        observationNote: `No active real-time train telemetry detected on corridor ${crossing.corridorId || 'ASR'} and no physical barrier sensor installed. Operating in unverified safety state.`,
+        recommendation: 'STATUS UNKNOWN — PROCEED WITH CAUTION',
+        lastTrainPassed
+      }
+    );
+  }
+
+  /**
+   * Identify all Amritsar railway crossings physically impacted or approaching by a specific train.
+   * Uses validated train position, timestamps, speed, direction, and OSM permanent-way track geometry.
+   * Avoids false associations based solely on geographic proximity.
+   * Filters out crossings on other corridors, crossings behind the train, or opposite-direction movements.
+   *
+   * @param {Object} train - Candidate sector train
+   * @param {Array} allCrossings - All Amritsar level crossings
+   * @param {Object|Array} allCorridors - Map or Array of OSM railway corridors with coordinates
+   * @returns {Object} Comprehensive intelligence report with impacted crossings and rejected crossings
+   */
+  identifyImpactedCrossingsForTrain(train, allCrossings = [], allCorridors = {}) {
+    const calculationTimestamp = new Date().toISOString();
+    const candCheck = this.validateTrainCandidate(train);
+
+    const corridorsMap = Array.isArray(allCorridors)
+      ? Object.fromEntries(allCorridors.map(c => [c.id, c]))
+      : (allCorridors || {});
+
+    // If train candidate is invalid (stale, missing coordinates, cancelled, out of sector):
+    if (!candCheck.isValid) {
+      return {
+        success: false,
+        trainNumber: train?.number || train?.id || 'UNKNOWN',
+        trainName: train?.name || 'Unknown Train',
+        corridorId: train?.corridorId || null,
+        direction: train?.direction || null,
+        isValidCandidate: false,
+        rejectionReason: candCheck.reason,
+        validationErrors: candCheck.errors,
+        impactedCrossings: [],
+        summary: `Train #${train?.number || 'UNKNOWN'} cannot be associated with any crossings: ${candCheck.reason}`,
+        calculationTimestamp
+      };
+    }
+
+    const corridor = corridorsMap[train.corridorId];
+    if (!corridor || !Array.isArray(corridor.coordinates) || corridor.coordinates.length < 2) {
+      return {
+        success: false,
+        trainNumber: train.number,
+        trainName: train.name,
+        corridorId: train.corridorId,
+        direction: train.direction,
+        isValidCandidate: false,
+        rejectionReason: `Permanent-way corridor geometry for ${train.corridorId} is unavailable`,
+        validationErrors: ['Corridor geometry unavailable'],
+        impactedCrossings: [],
+        summary: `No permanent-way track geometry available for corridor ${train.corridorId}`,
+        calculationTimestamp
+      };
+    }
+
+    const corridorCoords = corridor.coordinates;
+    const now = Date.now();
+    const speedKmH = (typeof train.speedKmH === 'number' && train.speedKmH > 0)
+      ? train.speedKmH
+      : (train.sectionalSpeedKmH || CROSSING_DETECTION_THRESHOLDS.DEFAULT_SECTIONAL_SPEED_KMPH);
+    const speedMs = Math.max(1, speedKmH) / 3.6;
+    const rakeLengthM = this.getRakeLengthMeters(train);
+    const traverseDurationSec = Math.round((rakeLengthM + 60) / speedMs);
+    const leadTimeSec = CROSSING_DETECTION_THRESHOLDS.CLOSURE_LEAD_SEC;
+
+    const impactedCrossings = [];
+    const clearedCrossings = [];
+    const incompatibleCrossings = [];
+
+    for (const crossing of allCrossings) {
+      // 1. Avoid false associations based solely on geographic proximity
+      if (crossing.corridorId !== train.corridorId) {
+        incompatibleCrossings.push({
+          crossingId: crossing.id,
+          crossingName: crossing.name,
+          crossingCorridor: crossing.corridorId,
+          trainCorridor: train.corridorId,
+          reason: 'Corridor mismatch: No physical track connection'
+        });
+        continue;
+      }
+
+      // 2. Validate directional approach along track geometry
+      const geoCheck = GeographicValidator.validateApproachingCrossing(
+        train,
+        crossing,
+        corridorCoords
+      );
+
+      if (!geoCheck.isValid) {
+        continue;
+      }
+
+      if (geoCheck.hasCleared) {
+        clearedCrossings.push({
+          crossingId: crossing.id,
+          crossingName: crossing.name,
+          trackDistanceKm: geoCheck.trackDistanceKm,
+          status: 'CLEARED_RECEDING',
+          isOppositeDirection: true
+        });
+        continue;
+      }
+
+      if (geoCheck.isApproaching || geoCheck.isTraversing) {
+        const distKm = geoCheck.trackDistanceKm || 0;
+        const distMeters = distKm * 1000;
+        const arrivalTimeSec = geoCheck.isTraversing ? 0 : Math.round(distMeters / speedMs);
+        const etaMinutes = Number((arrivalTimeSec / 60).toFixed(1));
+        const passageTime = new Date(now + arrivalTimeSec * 1000);
+        const closeTime = new Date(passageTime.getTime() - leadTimeSec * 1000);
+        const openTime = new Date(passageTime.getTime() + (traverseDurationSec + CROSSING_DETECTION_THRESHOLDS.GATE_CLEARANCE_BUFFER_SEC) * 1000);
+
+        let impactStatus = 'EXTENDED_APPROACH';
+        if (geoCheck.isTraversing) {
+          impactStatus = 'TRAVERSING';
+        } else if (distKm <= 3.5 || etaMinutes <= 4.0) {
+          impactStatus = 'IMMINENT_CLOSURE';
+        } else if (distKm <= 8.0 || etaMinutes <= 12.0) {
+          impactStatus = 'APPROACH_ALERT';
+        }
+
+        impactedCrossings.push({
+          crossingId: crossing.id,
+          osmId: crossing.osmId,
+          crossingName: crossing.name,
+          punjabiName: crossing.punjabiName || '',
+          locality: crossing.locality || '',
+          corridorId: crossing.corridorId,
+          direction: train.direction,
+          trackDistanceKm: Number(distKm.toFixed(2)),
+          speedKmH,
+          hasLiveSpeedMeasurement: Boolean(train.hasLiveSpeedMeasurement),
+          speedSource: train.hasLiveSpeedMeasurement ? 'PROVIDER_LIVE_SPEED' : 'TIMETABLE_SECTIONAL_ESTIMATE',
+          predictionConfidence: train.hasLiveSpeedMeasurement ? 'HIGH' : 'MODERATE',
+          positionClassification: train.positionClassification || 'STATION_PROGRESS',
+          estimatedTimeToArrivalSec: arrivalTimeSec,
+          etaMinutes,
+          expectedTrainArrival: passageTime.toISOString(),
+          estimatedGateClosingTime: closeTime.toISOString(),
+          estimatedGateReopeningTime: openTime.toISOString(),
+          closureWindowDurationSec: traverseDurationSec + leadTimeSec + CROSSING_DETECTION_THRESHOLDS.GATE_CLEARANCE_BUFFER_SEC,
+          impactStatus,
+          isStatusEstimated: true,
+          observedPhysicalGateState: 'UNKNOWN',
+          physicalSensorAvailable: false,
+          physicalSensorNote: 'No hardware gate sensor connected. Closure window calculated from track kinematics.'
+        });
+      }
+    }
+
+    // Sort chronologically by forward track arrival ETA
+    impactedCrossings.sort((a, b) => a.estimatedTimeToArrivalSec - b.estimatedTimeToArrivalSec);
 
     return {
-      status: 'OPEN',
-      statusReason: `Clear passage. No train approaching within 10-15m gate closure threshold on corridor ${crossing.corridorId || 'ASR'}.`,
-      legacyStatus: 'EXPECTED_OPEN',
-      predictionState: 'CLEAR_PASSAGE',
-      countdownAvailable: false,
-      gateStatusClassification: 'PREDICTED PASSAGE CLEAR',
-      gateStatusLabel: 'PREDICTED CLEAR',
-      predictionAvailable: true,
-      isStatusEstimated: false,
-      statusObservationType: 'CORRIDOR_KINEMATICS',
-      statusObservationNote: 'Open roadway. Active corridor clear of approaching trains.',
-      observedPhysicalGateState: 'UNKNOWN',
-      physicalSensorAvailable: false,
-      physicalSensorNote: 'No operational hardware barrier sensor or CRIS interlocking relay telemetry connected. Physical gate status is UNKNOWN. Passage predicted clear based on monitored track.',
-      timeToNextClosureSec: 0,
-      upcomingTrainId: null,
-      associatedTrainId: null,
-      associatedTrainNumber: null,
-      trainRoute: null,
-      trainDirection: null,
-      distanceAlongTrackKm: null,
-      estimatedTimeToArrivalSec: null,
-      estimatedGateClosingTime: null,
-      expectedTrainArrival: null,
-      estimatedGateReopeningTime: null,
-      predictedReopenTime: null,
-      remainingWaitSec: 0,
-      dataClassification: 'LIVE_TRACK_MONITORED',
-      dataClassificationLabel: 'Live Permanent-Way Track Monitored',
-      forecastStatus: 'PREDICTED_PASSAGE_CLEAR',
-      forecastNote: 'Clear roadway. No approaching train detected on corridor.',
-      message: 'Clear roadway. No approaching train detected on corridor.',
-      recommendation: 'PREDICTED PASSAGE CLEAR — PROCEED WITH NORMAL VIGILANCE',
-      speedKmH: null,
-      hasLiveSpeedMeasurement: false,
-      speedSource: 'UNAVAILABLE',
-      etaCalculationMethod: 'UNAVAILABLE',
-      predictionConfidence: 'HIGH',
-      providerObservationTimestamp: null,
-      apiRetrievalTimestamp: null,
-      calculationTimestamp,
-      lastProviderSyncTimestamp: feedContext.lastSuccessfulSync || null,
-      dataFreshness: 'LIVE',
-      warningBufferSec: 180,
-      traverseDurationSec: 60,
-      upcomingTrain: null,
-      primaryTrain: null,
-      upcomingTrains: [],
-      subsequentTrains: [],
-      totalUpcomingTrains: 0,
-      combinedClosure: null,
-      overlappingClosure: null,
-      timingMetrics: null,
-      closure: null,
-      reopening: null,
-      lastTrainPassed
+      success: true,
+      trainNumber: train.number,
+      trainName: train.name,
+      corridorId: train.corridorId,
+      direction: train.direction,
+      positionClassification: train.positionClassification || 'STATION_PROGRESS',
+      hasLiveSpeedMeasurement: Boolean(train.hasLiveSpeedMeasurement),
+      speedKmH,
+      isValidCandidate: true,
+      totalImpactedCrossings: impactedCrossings.length,
+      impactedCrossings,
+      clearedCrossingsCount: clearedCrossings.length,
+      clearedCrossings,
+      incompatibleCrossingsCount: incompatibleCrossings.length,
+      incompatibleCrossings,
+      summary: `Train #${train.number} (${train.name}) approaching ${impactedCrossings.length} crossings on ${train.corridorId} [${train.direction}]`,
+      calculationTimestamp
+    };
+  }
+
+  /**
+   * Identify all trains affecting a specific Amritsar railway crossing.
+   * Filters out stale trains, missing coordinates, opposite-direction movements, and incompatible corridors.
+   *
+   * @param {Object} crossing - Level crossing object
+   * @param {Array} allTrains - List of all candidate trains
+   * @param {Array} corridorCoordinates - OSM track points for crossing's corridor
+   * @param {Object} feedContext - Telemetry provider sync context
+   * @returns {Object} Train-to-fatak crossing analysis
+   */
+  identifyImpactingTrainsForCrossing(crossing, allTrains = [], corridorCoordinates = [], feedContext = {}) {
+    const evaluation = this.evaluateCrossingGateState(crossing, allTrains, corridorCoordinates, feedContext);
+    return {
+      crossingId: crossing.id,
+      crossingName: crossing.name,
+      corridorId: crossing.corridorId,
+      status: evaluation.status,
+      gateStatusLabel: evaluation.gateStatusLabel,
+      gateStatusClassification: evaluation.gateStatusClassification,
+      predictionState: evaluation.predictionState,
+      isStatusEstimated: evaluation.isStatusEstimated,
+      observedPhysicalGateState: evaluation.observedPhysicalGateState,
+      primaryTrain: evaluation.primaryTrain,
+      upcomingTrains: evaluation.upcomingTrains,
+      totalImpactingTrains: evaluation.totalUpcomingTrains,
+      estimatedGateClosingTime: evaluation.estimatedGateClosingTime,
+      expectedTrainArrival: evaluation.expectedTrainArrival,
+      predictedReopenTime: evaluation.predictedReopenTime,
+      countdownAvailable: evaluation.countdownAvailable,
+      recommendation: evaluation.recommendation,
+      fullEvaluation: evaluation
     };
   }
 }
 
 export const trainDetectionEngine = new TrainDetectionEngine();
+

@@ -3,6 +3,8 @@ import { Navbar } from './components/Navbar';
 import { Sidebar } from './components/Sidebar';
 import { BottomNav } from './components/BottomNav';
 import { CrossingDetailPanel } from './components/CrossingDetailPanel';
+import { TrainScheduleModal } from './components/TrainScheduleModal';
+import { LocationOnboardingModal } from './components/LocationOnboardingModal';
 
 import { HomeView } from './views/HomeView';
 import { CrossingsView } from './views/CrossingsView';
@@ -21,7 +23,8 @@ import {
   SectorTrain, 
   RailwayCorridor, 
   OperationalMetrics, 
-  TelemetryPayload 
+  TelemetryPayload,
+  UserLocationProfile 
 } from './types';
 import { railwayApi } from './services/apiService';
 import { nativeService } from './services/nativeService';
@@ -58,14 +61,41 @@ export function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [selectedCrossing, setSelectedCrossing] = useState<RailwayCrossing | null>(null);
   const [selectedTrain, setSelectedTrain] = useState<SectorTrain | null>(null);
+  const [scheduleModalTrain, setScheduleModalTrain] = useState<SectorTrain | null>(null);
   const [isOnline, setIsOnline] = useState<boolean>(true);
-  const [showIntro, setShowIntro] = useState<boolean>(() => {
-    try {
-      return !sessionStorage.getItem('fatak_intro_seen');
-    } catch {
-      return false;
-    }
+  const [showIntro, setShowIntro] = useState<boolean>(true);
+
+  // User Location Profile (persisted locally across restarts)
+  const [userProfile, setUserProfile] = useState<UserLocationProfile | null>(() => {
+    return nativeService.getUserLocationProfile();
   });
+  const [showLocationModal, setShowLocationModal] = useState<boolean>(false);
+
+  // Synchronize user profile and theme updates across app components
+  useEffect(() => {
+    // Initial theme sync
+    nativeService.applyEffectiveTheme(nativeService.getEffectiveTheme());
+
+    const handleProfileUpdate = (e: any) => {
+      setUserProfile(e.detail);
+    };
+    const handleReplayIntro = () => {
+      setShowIntro(true);
+    };
+    window.addEventListener('fatak:location-profile-updated', handleProfileUpdate);
+    window.addEventListener('fatak:replay-intro', handleReplayIntro);
+    return () => {
+      window.removeEventListener('fatak:location-profile-updated', handleProfileUpdate);
+      window.removeEventListener('fatak:replay-intro', handleReplayIntro);
+    };
+  }, []);
+
+  // Trigger first-time onboarding modal after startup intro has concluded
+  useEffect(() => {
+    if (!showIntro && !nativeService.isLocationOnboarded()) {
+      setShowLocationModal(true);
+    }
+  }, [showIntro]);
 
   // Live telemetry state
   const [crossings, setCrossings] = useState<RailwayCrossing[]>(INITIAL_CROSSINGS);
@@ -142,12 +172,52 @@ export function App() {
 
     // Subscribe to live telemetry stream
     const unsubscribe = railwayApi.subscribe((payload: TelemetryPayload) => {
-      setCrossings(payload.crossings);
+      // Structural sharing for crossings to avoid unnecessary component remounts and re-renders
+      setCrossings(prev => {
+        if (!prev || prev.length !== payload.crossings.length) {
+          return payload.crossings;
+        }
+        let anyChanged = false;
+        const merged = payload.crossings.map((nextC, idx) => {
+          const prevC = prev[idx];
+          if (
+            prevC &&
+            prevC.id === nextC.id &&
+            prevC.status === nextC.status &&
+            prevC.upcomingTrainId === nextC.upcomingTrainId &&
+            prevC.estimatedGateClosingTime === nextC.estimatedGateClosingTime &&
+            prevC.predictedReopenTime === nextC.predictedReopenTime &&
+            prevC.timeToNextClosureSec === nextC.timeToNextClosureSec &&
+            prevC.remainingWaitSec === nextC.remainingWaitSec
+          ) {
+            return prevC;
+          }
+          anyChanged = true;
+          return nextC;
+        });
+        return anyChanged ? merged : prev;
+      });
+
       setTrains(payload.trains);
       if (payload.activeCorridors?.length) {
         setCorridors(payload.activeCorridors);
       }
-      setMetrics(payload.metrics);
+
+      setMetrics(prev => {
+        if (
+          prev &&
+          prev.totalCrossings === payload.metrics.totalCrossings &&
+          prev.openCount === payload.metrics.openCount &&
+          prev.closedCount === payload.metrics.closedCount &&
+          prev.approachingCount === payload.metrics.approachingCount &&
+          prev.unknownCount === payload.metrics.unknownCount &&
+          prev.activeSectorTrains === payload.metrics.activeSectorTrains &&
+          prev.feedStatus === payload.metrics.feedStatus
+        ) {
+          return prev;
+        }
+        return payload.metrics;
+      });
       setLastUpdate(payload.timestamp);
 
       // Check for status changes to trigger audible chime
@@ -164,6 +234,9 @@ export function App() {
         }
         prevStatusesRef.current.set(c.id, c.status);
       });
+
+      // Evaluate and trigger reliable alerts for relevant approaching crossings & credible predicted closures
+      nativeService.processTelemetryCrossingAlerts(payload.crossings, payload.trains);
 
       // Update selected crossing with latest data if open
       setSelectedCrossing(current => {
@@ -214,6 +287,8 @@ export function App() {
         <Navbar
           metrics={metrics}
           lastUpdateTimestamp={lastUpdate}
+          userProfile={userProfile}
+          onChangeLocation={() => setShowLocationModal(true)}
         />
 
         {/* OFFLINE BANNER */}
@@ -283,6 +358,8 @@ export function App() {
               crossings={crossings}
               trains={trains}
               corridors={corridors}
+              metrics={metrics}
+              lastUpdateTimestamp={lastUpdate}
               onSelectCrossing={handleSelectCrossingAndOpenDetails}
               onNavigate={navigateTo}
               initialFilter={currentRoute === '/forecasts' ? 'CLOSURE_EXPECTED' : undefined}
@@ -298,9 +375,13 @@ export function App() {
             />
           )}
 
+
           {currentRoute === '/saved-places' && (
             <SavedPlacesView
+              crossings={crossings}
+              trains={trains}
               onNavigate={navigateTo}
+              onSelectCrossing={handleSelectCrossingAndOpenDetails}
             />
           )}
 
@@ -345,6 +426,16 @@ export function App() {
         )}
       </AnimatePresence>
 
+      {/* TRAIN SCHEDULE MODAL */}
+      {scheduleModalTrain && (
+        <TrainScheduleModal
+          isOpen={true}
+          train={scheduleModalTrain}
+          onClose={() => setScheduleModalTrain(null)}
+        />
+      )}
+
+
       {/* CINEMATIC APPLICATION INTRODUCTION (INITIAL LAUNCH ONLY) */}
       {showIntro && (
         <CinematicIntro
@@ -353,9 +444,26 @@ export function App() {
               sessionStorage.setItem('fatak_intro_seen', 'true');
             } catch {}
             setShowIntro(false);
+            if (!nativeService.isLocationOnboarded()) {
+              setShowLocationModal(true);
+            }
           }}
         />
       )}
+
+      {/* LOCATION ONBOARDING & PREFERENCES MODAL */}
+      <LocationOnboardingModal
+        isOpen={showLocationModal}
+        onClose={() => setShowLocationModal(false)}
+        crossings={crossings}
+        trains={trains}
+        existingProfile={userProfile}
+        onSaveProfile={(saved) => {
+          setUserProfile(saved);
+          setShowLocationModal(false);
+        }}
+        isInitialOnboarding={!userProfile}
+      />
     </div>
   );
 }

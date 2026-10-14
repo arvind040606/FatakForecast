@@ -56,12 +56,12 @@ export const DrillModal: React.FC<DrillModalProps> = ({
       padding: '20px'
     }}>
       <div style={{
-        backgroundColor: '#FFFFFF',
+        backgroundColor: 'var(--bg-surface)',
         border: '1px solid var(--border-soft)',
         borderRadius: '14px',
         width: '460px',
         maxWidth: '100%',
-        boxShadow: '0 20px 48px rgba(18, 75, 56, 0.18)',
+        boxShadow: '0 20px 48px rgba(0, 0, 0, 0.25)',
         overflow: 'hidden'
       }}>
         {/* HEADER */}
@@ -71,7 +71,7 @@ export const DrillModal: React.FC<DrillModalProps> = ({
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
-          backgroundColor: '#FFFFFF'
+          backgroundColor: 'var(--bg-secondary)'
         }}>
           <div>
             <h3 style={{ fontSize: '15px', fontWeight: 700, color: 'var(--color-primary-dark)', margin: 0 }}>
@@ -201,7 +201,7 @@ export const DrillModal: React.FC<DrillModalProps> = ({
           borderTop: '1px solid var(--border-soft)',
           display: 'flex',
           justifyContent: 'flex-end',
-          backgroundColor: '#FFFFFF'
+          backgroundColor: 'var(--bg-secondary)'
         }}>
           <button onClick={onClose} className="btn btn-secondary" style={{ fontSize: '12px', padding: '6px 14px' }}>
             Close Console

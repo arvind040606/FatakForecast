@@ -14,22 +14,44 @@ import {
   SavedPlace, 
   SavedPlaceCategory, 
   NotificationPreferences, 
+  NotificationCategory,
   AppNotification, 
   TravelMode,
   PlaceSearchResult,
   SmartCommuteAlarm,
   AlarmRecurrence,
-  CommuteAlarmDepartureEstimate
+  CommuteAlarmDepartureEstimate,
+  UserLocationProfile,
+  RailwayCrossing,
+  SectorTrain,
+  ThemeMode
 } from '../types';
 import { AMRITSAR_LANDMARKS } from '../data/landmarks';
 import { INITIAL_CROSSINGS } from './amritsarData';
+
+function geoDistanceMeters(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const R = 6371e3;
+  const phi1 = (lat1 * Math.PI) / 180;
+  const phi2 = (lat2 * Math.PI) / 180;
+  const deltaPhi = ((lat2 - lat1) * Math.PI) / 180;
+  const deltaLambda = ((lon2 - lon1) * Math.PI) / 180;
+  const a = Math.sin(deltaPhi / 2) * Math.sin(deltaPhi / 2) +
+            Math.cos(phi1) * Math.cos(phi2) *
+            Math.sin(deltaLambda / 2) * Math.sin(deltaLambda / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+}
 
 const DEFAULT_NOTIFICATION_PREFS: NotificationPreferences = {
   departureReminders: true,
   crossingStatusChanges: true,
   routeEtaChanges: true,
   activeRouteWarnings: true,
-  providerOutages: true
+  providerOutages: true,
+  alertRadiusMeters: 2500, // 2.5 km vicinity threshold for relevant approaching crossings
+  routeDelayThresholdMin: 3, // 3 minutes delta for material route changes
+  closureAdvanceNoticeMin: 5, // 5 minutes advance notice for predicted closure windows
+  cooldownMinutes: 10 // 10 minutes repeat cooldown per event signature
 };
 
 // Demo places are isolated here and ONLY returned when demoMode is explicitly toggled by user
@@ -63,23 +85,56 @@ export const DEMO_PRESET_PLACES: SavedPlace[] = [
   }
 ];
 
+// Production Cloud Backend Gateway (Publicly Accessible over HTTPS)
+export const PRODUCTION_BACKEND_URL = 'https://fatakforecast.vercel.app';
+
 class NativeService {
   private isCapacitorNative: boolean = false;
-  private backendBaseUrl: string = '';
+  private backendBaseUrl: string = PRODUCTION_BACKEND_URL;
   private notificationHistory: AppNotification[] = [];
   private notificationPrefs: NotificationPreferences = { ...DEFAULT_NOTIFICATION_PREFS };
   private savedPlaces: SavedPlace[] = []; // Starts completely empty in production
   private smartAlarms: SmartCommuteAlarm[] = []; // User-configured smart departure alarms
+  private favoriteCrossingIds: Set<string> = new Set();
+  private previousCrossingStates: Map<string, string> = new Map();
   private recentNotificationsSent: Set<string> = new Set();
+  private eventCooldownMap: Map<string, number> = new Map();
   private travelModePreference: TravelMode = 'car';
+  private userLocationProfile: UserLocationProfile | null = null;
   private demoModeActive: boolean = false;
   private audioCtx: AudioContext | null = null;
   private searchPlacesCache = new Map<string, { data: PlaceSearchResult[]; timestamp: number }>();
   private readonly SEARCH_CACHE_TTL_MS = 10 * 60 * 1000;
+  private themePreference: ThemeMode = 'dark';
 
   constructor() {
     this.isCapacitorNative = typeof (window as any)?.Capacitor !== 'undefined' && 
                              (window as any)?.Capacitor?.isNativePlatform?.() === true;
+
+    // Default to the verified production cloud backend URL for standalone phone operation
+    this.backendBaseUrl = PRODUCTION_BACKEND_URL;
+
+    // Listen for OS system theme changes
+    if (typeof window !== 'undefined' && window.matchMedia) {
+      try {
+        const media = window.matchMedia('(prefers-color-scheme: dark)');
+        const handleSchemeChange = (e: MediaQueryListEvent) => {
+          if (this.getThemePreference() === 'system') {
+            const eff = e.matches ? 'dark' : 'light';
+            this.applyEffectiveTheme(eff);
+            window.dispatchEvent(new CustomEvent('fatak:theme-changed', {
+              detail: { theme: 'system', effective: eff }
+            }));
+          }
+        };
+        if (media.addEventListener) {
+          media.addEventListener('change', handleSchemeChange);
+        } else if ((media as any).addListener) {
+          (media as any).addListener(handleSchemeChange);
+        }
+      } catch (e) {}
+    }
+
     this.initPlatformSettings();
     this.loadPersistedData();
   }
@@ -99,8 +154,42 @@ class NativeService {
   private async initPlatformSettings() {
     try {
       if (this.isCapacitorNative) {
-        await StatusBar.setStyle({ style: Style.Dark });
-        await StatusBar.setBackgroundColor({ color: '#070b14' });
+        const eff = this.getEffectiveTheme();
+        if (eff === 'dark') {
+          await StatusBar.setStyle({ style: Style.Light });
+          await StatusBar.setBackgroundColor({ color: '#0c1222' });
+        } else {
+          await StatusBar.setStyle({ style: Style.Dark });
+          await StatusBar.setBackgroundColor({ color: '#F7F5EF' });
+        }
+
+        // Ensure high-importance notification channels for Android 8.0+ / 13+ / 14+
+        try {
+          await LocalNotifications.createChannel({
+            id: 'fatak_alerts',
+            name: 'Railway Crossing Alerts',
+            description: 'Real-time alerts for railway barrier closures and approaching trains',
+            importance: 5,
+            visibility: 1,
+            vibration: true,
+            lights: true,
+            lightColor: '#176B4D'
+          });
+
+          await LocalNotifications.createChannel({
+            id: 'fatak_reminders',
+            name: 'Commute Departure Reminders',
+            description: 'Smart commute departure warnings and route timing reminders',
+            importance: 4,
+            visibility: 1,
+            vibration: true,
+            lights: true,
+            lightColor: '#176B4D'
+          });
+        } catch (chErr) {
+          console.warn('[NativeService] Channel setup fallback:', chErr);
+        }
+
         await LocalNotifications.registerActionTypes({
           types: [
             {
@@ -112,6 +201,14 @@ class NativeService {
             }
           ]
         });
+
+        LocalNotifications.addListener('localNotificationReceived', (notification) => {
+          this.triggerHaptic('medium');
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('fatak:notification-received', { detail: notification }));
+          }
+        });
+
         LocalNotifications.addListener('localNotificationActionPerformed', async (action) => {
           if (action.actionId === 'SNOOZE') {
             const snoozeDate = new Date(Date.now() + 5 * 60 * 1000);
@@ -125,6 +222,21 @@ class NativeService {
           } else if (action.actionId === 'VIEW_ROUTE') {
             if (typeof window !== 'undefined' && window.location) {
               window.history.pushState({}, '', '/planner');
+              window.dispatchEvent(new PopStateEvent('popstate'));
+            }
+          } else {
+            // Default notification tap: navigate to relevant view
+            const extra = action.notification?.extra;
+            let targetRoute = extra?.actionUrl || '/notifications';
+            if (!extra?.actionUrl) {
+              if (extra?.crossingId) {
+                targetRoute = '/crossings';
+              } else if (extra?.category === 'departureReminders' || extra?.category === 'routeEtaChanges') {
+                targetRoute = '/planner';
+              }
+            }
+            if (typeof window !== 'undefined' && window.location) {
+              window.history.pushState({}, '', targetRoute);
               window.dispatchEvent(new PopStateEvent('popstate'));
             }
           }
@@ -143,10 +255,35 @@ class NativeService {
     try {
       // 1. Backend URL
       const storedUrl = await this.storageGet('fatak_backend_url');
-      if (storedUrl) {
-        this.backendBaseUrl = storedUrl;
+      const isLegacyLocalIp = storedUrl && (
+        storedUrl.includes('localhost') || 
+        storedUrl.includes('127.0.0.1') || 
+        storedUrl.includes('10.211.') || 
+        storedUrl.includes('10.59.') || 
+        storedUrl.includes('10.0.2.2') ||
+        storedUrl.includes('192.168.')
+      );
+
+      if (this.isCapacitorNative) {
+        // Automatically migrate native mobile app away from any legacy host PC IPs to production cloud
+        if (!storedUrl || isLegacyLocalIp) {
+          this.backendBaseUrl = PRODUCTION_BACKEND_URL;
+          await this.storageSet('fatak_backend_url', this.backendBaseUrl);
+        } else {
+          this.backendBaseUrl = storedUrl;
+        }
+        // Probe connection asynchronously to confirm live connectivity
+        this.probeWorkingBackendUrl().then(working => {
+          if (working) {
+            window.dispatchEvent(new CustomEvent('fatak:backend-connected', { detail: working }));
+          }
+        }).catch(() => {});
       } else {
-        this.backendBaseUrl = this.getDefaultBackendUrl();
+        if (storedUrl && !isLegacyLocalIp) {
+          this.backendBaseUrl = storedUrl;
+        } else {
+          this.backendBaseUrl = this.getDefaultBackendUrl();
+        }
       }
 
       // 2. Fetch Saved Places from Server Database
@@ -157,6 +294,23 @@ class NativeService {
       if (storedPrefs) {
         try {
           this.notificationPrefs = { ...DEFAULT_NOTIFICATION_PREFS, ...JSON.parse(storedPrefs) };
+        } catch (e) {}
+      }
+
+      // 3b. Notification Event Cooldowns
+      const storedCooldowns = await this.storageGet('fatak_notification_cooldowns');
+      if (storedCooldowns) {
+        try {
+          const parsed = JSON.parse(storedCooldowns);
+          if (parsed && typeof parsed === 'object') {
+            const now = Date.now();
+            const maxAgeMs = 24 * 60 * 60 * 1000;
+            Object.entries(parsed).forEach(([sig, ts]) => {
+              if (typeof ts === 'number' && now - ts < maxAgeMs) {
+                this.eventCooldownMap.set(sig, ts);
+              }
+            });
+          }
         } catch (e) {}
       }
 
@@ -181,9 +335,195 @@ class NativeService {
           this.smartAlarms = JSON.parse(storedAlarms);
         } catch (e) {}
       }
+
+      // 7. User Location Profile
+      const storedProfile = await this.storageGet('fatak_user_location_profile');
+      if (storedProfile) {
+        try {
+          this.userLocationProfile = JSON.parse(storedProfile);
+        } catch (e) {}
+      }
+
+      // 8. Theme Preference
+      const storedTheme = await this.storageGet('fatak_theme_preference');
+      if (storedTheme === 'dark' || storedTheme === 'light' || storedTheme === 'system') {
+        this.themePreference = storedTheme as ThemeMode;
+      } else {
+        this.themePreference = 'dark';
+      }
+      await this.applyEffectiveTheme(this.getEffectiveTheme());
+
+      // 9. Favorite Crossings
+      const storedFavorites = await this.storageGet('fatak_favorite_crossings');
+      if (storedFavorites) {
+        try {
+          const parsed = JSON.parse(storedFavorites);
+          if (Array.isArray(parsed)) {
+            this.favoriteCrossingIds = new Set(parsed);
+          }
+        } catch (e) {}
+      } else if (typeof window !== 'undefined') {
+        try {
+          const localFav = localStorage.getItem('fatak_favorite_crossings');
+          if (localFav) {
+            const parsed = JSON.parse(localFav);
+            if (Array.isArray(parsed)) {
+              this.favoriteCrossingIds = new Set(parsed);
+            }
+          }
+        } catch (e) {}
+      }
     } catch (err) {
       console.warn('[NativeService] Load persisted data error:', err);
     }
+  }
+
+  // ==========================================
+  // THEME MANAGEMENT (Dark / Light / System)
+  // ==========================================
+
+  public getThemePreference(): ThemeMode {
+    if (typeof window !== 'undefined') {
+      const stored = localStorage.getItem('fatak_theme_preference') as ThemeMode;
+      if (stored === 'dark' || stored === 'light' || stored === 'system') {
+        return stored;
+      }
+    }
+    return this.themePreference;
+  }
+
+  public getEffectiveTheme(): 'dark' | 'light' {
+    const pref = this.getThemePreference();
+    if (pref === 'system') {
+      if (typeof window !== 'undefined' && window.matchMedia) {
+        return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+      }
+      return 'dark';
+    }
+    return pref;
+  }
+
+  public async setThemePreference(theme: ThemeMode): Promise<void> {
+    this.themePreference = theme;
+    await this.storageSet('fatak_theme_preference', theme);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('fatak_theme_preference', theme);
+    }
+    const effective = this.getEffectiveTheme();
+    await this.applyEffectiveTheme(effective);
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('fatak:theme-changed', { detail: { theme, effective } }));
+    }
+  }
+
+  public async applyEffectiveTheme(effectiveTheme: 'dark' | 'light'): Promise<void> {
+    if (typeof document !== 'undefined') {
+      document.documentElement.setAttribute('data-theme', effectiveTheme);
+      if (effectiveTheme === 'light') {
+        document.documentElement.classList.add('theme-light');
+        document.documentElement.classList.remove('theme-dark');
+      } else {
+        document.documentElement.classList.add('theme-dark');
+        document.documentElement.classList.remove('theme-light');
+      }
+      const metaTheme = document.getElementById('theme-color-meta');
+      if (metaTheme) {
+        metaTheme.setAttribute('content', effectiveTheme === 'dark' ? '#070b14' : '#F7F5EF');
+      }
+    }
+
+    if (this.isCapacitorNative) {
+      try {
+        if (effectiveTheme === 'dark') {
+          await StatusBar.setStyle({ style: Style.Light });
+          await StatusBar.setBackgroundColor({ color: '#0c1222' });
+        } else {
+          await StatusBar.setStyle({ style: Style.Dark });
+          await StatusBar.setBackgroundColor({ color: '#F7F5EF' });
+        }
+      } catch (e) {
+        // Platform fallback
+      }
+    }
+  }
+
+  // ==========================================
+  // FAVOURITE CROSSINGS MANAGEMENT
+  // ==========================================
+
+  public getFavoriteCrossingIds(): string[] {
+    if (this.favoriteCrossingIds.size === 0 && typeof window !== 'undefined') {
+      try {
+        const localFav = localStorage.getItem('fatak_favorite_crossings');
+        if (localFav) {
+          const parsed = JSON.parse(localFav);
+          if (Array.isArray(parsed)) {
+            this.favoriteCrossingIds = new Set(parsed);
+          }
+        }
+      } catch (e) {}
+    }
+    return Array.from(this.favoriteCrossingIds);
+  }
+
+  public isFavoriteCrossing(crossingId: string): boolean {
+    return this.getFavoriteCrossingIds().includes(crossingId);
+  }
+
+  public async toggleFavoriteCrossing(crossingId: string): Promise<boolean> {
+    const currentlyFav = this.favoriteCrossingIds.has(crossingId);
+    if (currentlyFav) {
+      this.favoriteCrossingIds.delete(crossingId);
+    } else {
+      this.favoriteCrossingIds.add(crossingId);
+    }
+    const arr = Array.from(this.favoriteCrossingIds);
+    await this.storageSet('fatak_favorite_crossings', JSON.stringify(arr));
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('fatak_favorite_crossings', JSON.stringify(arr));
+      window.dispatchEvent(new CustomEvent('fatak:favorite-crossings-updated', { detail: arr }));
+    }
+    this.triggerHaptic(currentlyFav ? 'light' : 'success');
+    return !currentlyFav;
+  }
+
+  public getUserLocationProfile(): UserLocationProfile | null {
+    if (this.userLocationProfile) return this.userLocationProfile;
+    try {
+      const stored = localStorage.getItem('fatak_user_location_profile');
+      if (stored) {
+        this.userLocationProfile = JSON.parse(stored);
+        return this.userLocationProfile;
+      }
+    } catch (e) {}
+    return null;
+  }
+
+  public async setUserLocationProfile(profile: UserLocationProfile): Promise<void> {
+    this.userLocationProfile = profile;
+    await this.storageSet('fatak_user_location_profile', JSON.stringify(profile));
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('fatak:location-profile-updated', { detail: profile }));
+    }
+  }
+
+  public async clearUserLocationProfile(): Promise<void> {
+    this.userLocationProfile = null;
+    try {
+      if (this.isCapacitorNative) {
+        await Preferences.remove({ key: 'fatak_user_location_profile' });
+      }
+    } catch (e) {}
+    try {
+      localStorage.removeItem('fatak_user_location_profile');
+    } catch (e) {}
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('fatak:location-profile-updated', { detail: null }));
+    }
+  }
+
+  public isLocationOnboarded(): boolean {
+    return Boolean(this.getUserLocationProfile());
   }
 
   private async storageGet(key: string): Promise<string | null> {
@@ -216,20 +556,20 @@ class NativeService {
       const viteEnvUrl = (import.meta as any).env?.VITE_BACKEND_URL;
       if (viteEnvUrl) return String(viteEnvUrl).replace(/\/+$/, '');
 
-      // In Capacitor native mobile app
-      if (this.isCapacitorNative) {
-        return 'http://10.59.115.230:8787';
+      // In Capacitor native mobile app or on mobile devices, use cloud production URL
+      const isMobileDevice = this.isCapacitorNative || 
+                             /Android|iPhone|iPad|Mobile/i.test(navigator.userAgent) ||
+                             window.location.protocol === 'capacitor:' ||
+                             (window.location.hostname === 'localhost' && /Android/i.test(navigator.userAgent));
+
+      if (isMobileDevice) {
+        return PRODUCTION_BACKEND_URL;
       }
 
       const hostname = window.location.hostname;
       // Local development on PC loopback
       if (hostname === 'localhost' || hostname === '127.0.0.1') {
         return 'http://localhost:8787';
-      }
-
-      // If browsing via LAN IP on Wi-Fi (e.g., http://10.59.115.230:5173)
-      if (/^(192\.168\.|10\.|172\.(1[6-9]|2[0-9]|3[0-1])\.)/.test(hostname)) {
-        return `http://${hostname}:8787`;
       }
 
       // If hosted on Vercel, route to same-origin APIs
@@ -242,9 +582,9 @@ class NativeService {
         return window.location.origin;
       }
 
-      return window.location.origin || 'http://localhost:8787';
+      return window.location.origin || PRODUCTION_BACKEND_URL;
     }
-    return 'http://localhost:8787';
+    return PRODUCTION_BACKEND_URL;
   }
 
   public getBackendUrl(): string {
@@ -264,7 +604,7 @@ class NativeService {
     const startTime = Date.now();
     try {
       const res = await fetch(`${target}/api/ping`, {
-        signal: AbortSignal.timeout(4000)
+        signal: AbortSignal.timeout(3500)
       });
       const latencyMs = Date.now() - startTime;
       if (res.ok) {
@@ -274,6 +614,38 @@ class NativeService {
     } catch (err: any) {
       return { success: false, error: err.message || 'Connection timed out' };
     }
+  }
+
+  public async probeWorkingBackendUrl(): Promise<string | null> {
+    const candidateList = [
+      PRODUCTION_BACKEND_URL,
+      this.backendBaseUrl,
+      this.getDefaultBackendUrl()
+    ];
+    const candidates = Array.from(new Set(candidateList.filter(Boolean)));
+
+    // Probe candidate endpoints concurrently for immediate lock-on
+    const results = await Promise.all(candidates.map(async (url) => {
+      try {
+        const test = await this.testBackendReachability(url);
+        if (test.success) return url;
+      } catch (e) {}
+      return null;
+    }));
+
+    const working = results.find((u): u is string => !!u);
+    if (working) {
+      const changed = this.backendBaseUrl !== working;
+      this.backendBaseUrl = working;
+      await this.storageSet('fatak_backend_url', working);
+      await this.refreshSavedPlacesFromServer();
+      if (changed && typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('fatak:backend-connected', { detail: working }));
+        window.dispatchEvent(new CustomEvent('fatak:reconnect-ws', { detail: working }));
+      }
+      return working;
+    }
+    return null;
   }
 
   // ==========================================
@@ -630,25 +1002,60 @@ class NativeService {
     return false;
   }
 
+  private async saveCooldowns() {
+    try {
+      const obj: Record<string, number> = {};
+      const now = Date.now();
+      const maxAgeMs = 24 * 60 * 60 * 1000;
+      this.eventCooldownMap.forEach((ts, sig) => {
+        if (now - ts < maxAgeMs) {
+          obj[sig] = ts;
+        }
+      });
+      await this.storageSet('fatak_notification_cooldowns', JSON.stringify(obj));
+    } catch (e) {}
+  }
+
+  public getNotificationCooldownRemainingSec(signature: string): number {
+    const lastSent = this.eventCooldownMap.get(signature);
+    if (!lastSent) return 0;
+    const cooldownMs = (this.notificationPrefs.cooldownMinutes ?? 10) * 60 * 1000;
+    const remainingMs = cooldownMs - (Date.now() - lastSent);
+    return remainingMs > 0 ? Math.ceil(remainingMs / 1000) : 0;
+  }
+
+  public clearNotificationCooldowns(): void {
+    this.eventCooldownMap.clear();
+    this.storageSet('fatak_notification_cooldowns', JSON.stringify({}));
+  }
+
   public async scheduleNotification(options: {
     title: string;
     body: string;
-    category: keyof NotificationPreferences;
+    category: NotificationCategory;
     scheduledDate?: Date;
     crossingId?: string;
+    crossingName?: string;
+    eventSignature?: string;
+    actionUrl?: string;
   }): Promise<boolean> {
-    const { title, body, category, scheduledDate, crossingId } = options;
+    const { title, body, category, scheduledDate, crossingId, crossingName, eventSignature, actionUrl } = options;
 
     if (!this.notificationPrefs[category]) {
       return false;
     }
 
-    const dedupeKey = `${category}_${title}_${body.slice(0, 30)}`;
-    if (this.recentNotificationsSent.has(dedupeKey)) {
+    const effectiveSignature = eventSignature || `${category}:${crossingId || ''}:${title.trim().toLowerCase()}`;
+    const now = Date.now();
+    const lastSent = this.eventCooldownMap.get(effectiveSignature) || 0;
+    const cooldownMs = (this.notificationPrefs.cooldownMinutes ?? 10) * 60 * 1000;
+
+    if (now - lastSent < cooldownMs) {
       return false;
     }
-    this.recentNotificationsSent.add(dedupeKey);
-    setTimeout(() => this.recentNotificationsSent.delete(dedupeKey), 4 * 60 * 1000);
+
+    this.eventCooldownMap.set(effectiveSignature, now);
+    this.saveCooldowns();
 
     const notificationId = Math.floor(Math.random() * 1000000);
     const newRecord: AppNotification = {
@@ -658,6 +1065,9 @@ class NativeService {
       category,
       timestamp: new Date().toISOString(),
       crossingId,
+      crossingName,
+      eventSignature: effectiveSignature,
+      actionUrl,
       isRead: false,
       scheduledFor: scheduledDate ? scheduledDate.toISOString() : undefined
     };
@@ -671,6 +1081,7 @@ class NativeService {
 
     try {
       if (this.isCapacitorNative) {
+        const channelId = category === 'departureReminders' ? 'fatak_reminders' : 'fatak_alerts';
         const schedulePayload: ScheduleOptions = {
           notifications: [
             {
@@ -678,9 +1089,10 @@ class NativeService {
               title,
               body,
               schedule: scheduledDate ? { at: scheduledDate } : undefined,
-              sound: 'beep.wav',
+              channelId,
               smallIcon: 'ic_stat_train',
-              extra: { crossingId, category }
+              iconColor: '#176B4D',
+              extra: { crossingId, crossingName, category, actionUrl, eventSignature: effectiveSignature }
             }
           ]
         };
@@ -689,16 +1101,34 @@ class NativeService {
       }
 
       if ('Notification' in window && Notification.permission === 'granted') {
+        const fireWebNotification = () => {
+          try {
+            const notif = new Notification(title, {
+              body,
+              icon: '/favicon.ico',
+              tag: effectiveSignature
+            });
+            notif.onclick = () => {
+              window.focus();
+              const target = actionUrl || (crossingId ? '/crossings' : (category === 'departureReminders' ? '/planner' : '/notifications'));
+              if (typeof window !== 'undefined' && window.location) {
+                window.history.pushState({}, '', target);
+                window.dispatchEvent(new PopStateEvent('popstate'));
+              }
+            };
+          } catch (e) {
+            console.warn('[NativeService] Web Notification dispatch failed', e);
+          }
+        };
+
         if (scheduledDate) {
           const delayMs = scheduledDate.getTime() - Date.now();
           if (delayMs > 0) {
-            setTimeout(() => {
-              new Notification(title, { body, icon: '/favicon.ico' });
-            }, delayMs);
+            setTimeout(fireWebNotification, delayMs);
             return true;
           }
         }
-        new Notification(title, { body, icon: '/favicon.ico' });
+        fireWebNotification();
         return true;
       }
     } catch (err) {
@@ -706,6 +1136,228 @@ class NativeService {
     }
 
     return true;
+  }
+
+  /**
+   * Check and alert for relevant approaching crossings
+   */
+  public async checkAndAlertApproachingCrossing(params: {
+    crossing: RailwayCrossing;
+    train?: SectorTrain | null;
+    userLat?: number;
+    userLng?: number;
+  }): Promise<boolean> {
+    if (!this.notificationPrefs.crossingStatusChanges) return false;
+
+    const { crossing, train, userLat, userLng } = params;
+
+    // Proximity relevance filter: if user coords available, verify distance <= alertRadiusMeters
+    if (typeof userLat === 'number' && typeof userLng === 'number' && crossing.lat && crossing.lng) {
+      const distM = geoDistanceMeters(userLat, userLng, crossing.lat, crossing.lng);
+      const radiusM = this.notificationPrefs.alertRadiusMeters ?? 2500;
+      if (distM > radiusM) {
+        return false;
+      }
+    }
+
+    const timingMin = crossing.timeToNextClosureSec 
+      ? Math.max(1, Math.round(crossing.timeToNextClosureSec / 60))
+      : 2;
+    const timingText = `~${timingMin} min`;
+
+    const trainDesc = train ? `Train ${train.number} (${train.name || 'Express'})` : 'Approaching train';
+    const corridorText = crossing.corridorName ? ` on ${crossing.corridorName}` : '';
+
+    return await this.scheduleNotification({
+      title: `⚠️ Approaching Fatak: ${crossing.name}`,
+      body: `${trainDesc}${corridorText}. Barrier closure expected in ${timingText}. Plan alternate route.`,
+      category: 'crossingStatusChanges',
+      crossingId: crossing.id,
+      crossingName: crossing.name,
+      eventSignature: `approaching:${crossing.id}:${train ? train.number : 'active'}`,
+      actionUrl: '/crossings'
+    });
+  }
+
+  /**
+   * Check and alert for credible predicted closure windows
+   */
+  public async checkAndAlertPredictedClosure(params: {
+    crossing: RailwayCrossing;
+    timeToClosureSec: number;
+    confidence?: string;
+    train?: SectorTrain | null;
+  }): Promise<boolean> {
+    if (!this.notificationPrefs.crossingStatusChanges) return false;
+
+    const { crossing, timeToClosureSec, confidence, train } = params;
+
+    if (confidence === 'LOW') return false;
+
+    const noticeThresholdSec = (this.notificationPrefs.closureAdvanceNoticeMin ?? 5) * 60;
+    if (timeToClosureSec > noticeThresholdSec || timeToClosureSec < 20) return false;
+
+    const minutesUntil = Math.max(1, Math.round(timeToClosureSec / 60));
+    const now = new Date();
+    const closureTime = new Date(now.getTime() + timeToClosureSec * 1000);
+    const timeFormatted = closureTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+    return await this.scheduleNotification({
+      title: `🕒 Credible Closure Window: ${crossing.name}`,
+      body: `Predicted gate closure window at ${timeFormatted} (~${minutesUntil}m away). Confidence: ${confidence || 'MODERATE'}.`,
+      category: 'crossingStatusChanges',
+      crossingId: crossing.id,
+      crossingName: crossing.name,
+      eventSignature: `closure_window:${crossing.id}:${timeFormatted}`,
+      actionUrl: '/crossings'
+    });
+  }
+
+  /**
+   * Check and alert for material route delay or ETA changes
+   */
+  public async checkAndAlertRouteChange(params: {
+    routeLabel: string;
+    crossingName?: string;
+    previousDelaySec: number;
+    newDelaySec: number;
+    currentTravelTimeSec: number;
+  }): Promise<boolean> {
+    if (!this.notificationPrefs.routeEtaChanges) return false;
+
+    const { routeLabel, crossingName, previousDelaySec, newDelaySec, currentTravelTimeSec } = params;
+    const deltaMin = Math.round((newDelaySec - previousDelaySec) / 60);
+    const thresholdMin = this.notificationPrefs.routeDelayThresholdMin ?? 3;
+
+    if (deltaMin < thresholdMin) return false;
+
+    const totalTravelMin = Math.round(currentTravelTimeSec / 60);
+    const crossingText = crossingName ? ` at ${crossingName}` : '';
+
+    return await this.scheduleNotification({
+      title: `⚠️ Route Delay Change: ${routeLabel}`,
+      body: `Delay increased by +${deltaMin}m${crossingText}. Total journey time is now ~${totalTravelMin}m.`,
+      category: 'routeEtaChanges',
+      crossingName,
+      eventSignature: `route_delay:${routeLabel.toLowerCase().replace(/\s+/g, '_')}:${deltaMin}`,
+      actionUrl: '/planner'
+    });
+  }
+
+  /**
+   * Check and alert for suggested departure times supported by reliable predictions
+   */
+  public async checkAndAlertSuggestedDeparture(params: {
+    destinationName: string;
+    crossingName?: string;
+    recommendedDepartureTime: string;
+    waitMin?: number;
+    reason: string;
+  }): Promise<boolean> {
+    if (!this.notificationPrefs.departureReminders) return false;
+
+    const { destinationName, crossingName, recommendedDepartureTime, reason } = params;
+
+    return await this.scheduleNotification({
+      title: `⏰ Suggested Departure for ${destinationName}`,
+      body: `Optimal departure at ${recommendedDepartureTime}. ${reason}`,
+      category: 'departureReminders',
+      crossingName,
+      eventSignature: `suggested_dep:${destinationName.toLowerCase()}:${recommendedDepartureTime}`,
+      actionUrl: '/planner'
+    });
+  }
+
+  /**
+   * Process telemetry crossing updates to detect approaching trains and credible closure windows
+   */
+  public async processTelemetryCrossingAlerts(
+    crossings: RailwayCrossing[],
+    trains: SectorTrain[]
+  ): Promise<number> {
+    let triggeredCount = 0;
+    const userProfile = this.getUserLocationProfile();
+    const userLat = userProfile?.lat;
+    const userLng = userProfile?.lng;
+
+    for (const crossing of crossings) {
+      // 1. Approaching or imminent closure
+      if (crossing.status === 'APPROACHING' || (crossing.status === 'CLOSURE_EXPECTED' && (crossing.timeToNextClosureSec || 999) <= 180)) {
+        const train = trains.find(t => t.id === crossing.upcomingTrainId || t.targetCrossingId === crossing.id);
+        const sent = await this.checkAndAlertApproachingCrossing({
+          crossing,
+          train,
+          userLat,
+          userLng
+        });
+        if (sent) triggeredCount++;
+      }
+
+      // 2. Credible predicted closure window (before gate reaches APPROACHING)
+      if (
+        crossing.status === 'OPEN' && 
+        crossing.timeToNextClosureSec && 
+        crossing.timeToNextClosureSec <= ((this.notificationPrefs.closureAdvanceNoticeMin ?? 5) * 60) &&
+        crossing.predictionConfidence !== 'LOW'
+      ) {
+        const train = trains.find(t => t.id === crossing.upcomingTrainId || t.targetCrossingId === crossing.id);
+        const sent = await this.checkAndAlertPredictedClosure({
+          crossing,
+          timeToClosureSec: crossing.timeToNextClosureSec,
+          confidence: crossing.predictionConfidence,
+          train
+        });
+        if (sent) triggeredCount++;
+      }
+
+      // 3. Reopening detection (Crossing transitioned from CLOSED -> OPEN)
+      const prevStatus = this.previousCrossingStates.get(crossing.id);
+      if (
+        (prevStatus === 'CLOSED' || prevStatus === 'CLOSURE_REPORTED' || prevStatus === 'CLOSURE_EXPECTED') &&
+        crossing.status === 'OPEN'
+      ) {
+        const isFav = this.isFavoriteCrossing(crossing.id);
+        const title = isFav ? `🟢 Favourite Fatak Reopened: ${crossing.name}` : `🟢 Gate Reopened: ${crossing.name}`;
+        const sent = await this.scheduleNotification({
+          title,
+          body: `${crossing.name} level crossing is now open for road transit.`,
+          category: 'crossingStatusChanges',
+          crossingId: crossing.id,
+          crossingName: crossing.name,
+          eventSignature: `reopened:${crossing.id}:${Math.floor(Date.now() / (10 * 60 * 1000))}`,
+          actionUrl: '/crossings'
+        });
+        if (sent) triggeredCount++;
+      }
+
+      // 4. Saved Favourite Crossing Proximity Alerts
+      if (this.isFavoriteCrossing(crossing.id) && typeof userLat === 'number' && typeof userLng === 'number') {
+        const distM = geoDistanceMeters(userLat, userLng, crossing.lat, crossing.lng);
+        const alertRadius = this.notificationPrefs.alertRadiusMeters ?? 2500;
+        if (distM <= alertRadius) {
+          const isClosedOrApproaching = crossing.status === 'APPROACHING' || crossing.status === 'CLOSED' || crossing.status === 'CLOSURE_REPORTED' || crossing.status === 'CLOSURE_EXPECTED';
+          if (isClosedOrApproaching) {
+            const distKm = (distM / 1000).toFixed(1);
+            const statusLabel = crossing.status === 'CLOSED' ? 'Closed' : 'Closing soon';
+            const sent = await this.scheduleNotification({
+              title: `⚠️ Saved Fatak Alert: ${crossing.name} (${distKm} km)`,
+              body: `Your favourite crossing ${crossing.name} is ${statusLabel}. Consider alternative route via flyover.`,
+              category: 'crossingStatusChanges',
+              crossingId: crossing.id,
+              crossingName: crossing.name,
+              eventSignature: `fav_prox:${crossing.id}:${crossing.status}`,
+              actionUrl: '/crossings'
+            });
+            if (sent) triggeredCount++;
+          }
+        }
+      }
+
+      // Update previous state
+      this.previousCrossingStates.set(crossing.id, crossing.status);
+    }
+
+    return triggeredCount;
   }
 
   public async cancelAllScheduledNotifications(): Promise<void> {

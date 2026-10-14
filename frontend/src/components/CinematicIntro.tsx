@@ -1,232 +1,490 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { TrainTrack, ChevronRight } from 'lucide-react';
+import { ChevronRight, Volume2, VolumeX } from 'lucide-react';
 
 interface CinematicIntroProps {
   onComplete: () => void;
 }
 
 export const CinematicIntro: React.FC<CinematicIntroProps> = ({ onComplete }) => {
+  const [soundEnabled, setSoundEnabled] = useState<boolean>(false);
+  const [hasStartedExit, setHasStartedExit] = useState<boolean>(false);
+
   useEffect(() => {
-    // Check if user prefers reduced motion
-    const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    if (prefersReducedMotion) {
-      onComplete();
-      return;
-    }
+    // 1. Failsafe timer: Guarantees completion within 3.5 seconds
+    const failsafeTimer = setTimeout(() => {
+      triggerExit();
+    }, 3500);
 
-    // Auto complete after 1.9s
-    const timer = setTimeout(() => {
-      onComplete();
-    }, 1900);
+    return () => clearTimeout(failsafeTimer);
+  }, []);
 
-    return () => clearTimeout(timer);
-  }, [onComplete]);
+  const triggerExit = () => {
+    if (hasStartedExit) return;
+    setHasStartedExit(true);
+    setTimeout(() => {
+      onComplete();
+    }, 450);
+  };
 
   return (
     <AnimatePresence>
       <motion.div
-        className="cinematic-intro-overlay"
+        className="cinematic-intro-stage"
         initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        exit={{ opacity: 0, scale: 0.98 }}
-        transition={{ duration: 0.35, ease: 'easeInOut' }}
+        animate={{ opacity: hasStartedExit ? 0 : 1 }}
+        exit={{ opacity: 0, scale: 1.03 }}
+        transition={{ duration: 0.45, ease: [0.16, 1, 0.3, 1] }}
         style={{
           position: 'fixed',
           inset: 0,
-          zIndex: 10000,
-          backgroundColor: '#F7F5EF',
+          zIndex: 99999,
+          backgroundColor: '#070E1A',
+          color: '#FFFFFF',
           display: 'flex',
           flexDirection: 'column',
           alignItems: 'center',
           justifyContent: 'center',
           overflow: 'hidden',
-          userSelect: 'none'
+          userSelect: 'none',
+          fontFamily: 'var(--font-brand, "Outfit", sans-serif)'
         }}
       >
-        {/* SKIP BUTTON */}
-        <motion.button
-          onClick={onComplete}
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 0.9 }}
-          whileHover={{ opacity: 1, scale: 1.04 }}
-          whileTap={{ scale: 0.96 }}
-          transition={{ delay: 0.2 }}
-          style={{
-            position: 'absolute',
-            top: 'max(20px, env(safe-area-inset-top, 20px))',
-            right: 'max(20px, env(safe-area-inset-right, 20px))',
-            background: '#FFFFFF',
-            border: '1px solid var(--border-soft)',
-            color: 'var(--text-secondary)',
-            fontSize: '11.5px',
-            fontWeight: 600,
-            padding: '6px 14px',
-            borderRadius: 'var(--radius-full)',
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '4px',
-            boxShadow: 'var(--shadow-sm)',
-            zIndex: 20
-          }}
-          aria-label="Skip introduction"
-        >
-          <span>Skip</span>
-          <ChevronRight size={14} />
-        </motion.button>
-
-        {/* SUBTLE AMBIENT WARMTH */}
-        <div
-          style={{
-            position: 'absolute',
-            width: '420px',
-            height: '420px',
-            borderRadius: '50%',
-            background: 'radial-gradient(circle, rgba(23, 107, 77, 0.08) 0%, rgba(255, 120, 73, 0.05) 50%, transparent 70%)',
-            filter: 'blur(35px)',
-            pointerEvents: 'none'
-          }}
-        />
-
-        {/* CENTRAL BRAND CONTAINER */}
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', position: 'relative', zIndex: 10 }}>
-          {/* LOGO ICON MARK REVEAL */}
+        {/* TOP CONTROLS BAR: SKIP & AUDIO TOGGLE */}
+        <div style={{
+          position: 'absolute',
+          top: 'max(20px, env(safe-area-inset-top, 20px))',
+          left: 'max(20px, env(safe-area-inset-left, 20px))',
+          right: 'max(20px, env(safe-area-inset-right, 20px))',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          zIndex: 50
+        }}>
+          {/* REGIONAL BADGE */}
           <motion.div
-            initial={{ scale: 0.7, opacity: 0, y: 14 }}
-            animate={{ scale: 1, opacity: 1, y: 0 }}
-            transition={{
-              type: 'spring',
-              stiffness: 260,
-              damping: 22,
-              delay: 0.12
-            }}
+            initial={{ opacity: 0, x: -10 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ delay: 0.2 }}
             style={{
-              width: '68px',
-              height: '68px',
-              borderRadius: '18px',
-              backgroundColor: '#FFFFFF',
-              border: '1.5px solid var(--border-soft)',
-              boxShadow: 'var(--shadow-lg)',
               display: 'flex',
               alignItems: 'center',
-              justifyContent: 'center',
-              color: 'var(--accent-primary)',
-              marginBottom: '16px'
+              gap: '6px',
+              padding: '4px 10px',
+              borderRadius: '20px',
+              background: 'rgba(255, 255, 255, 0.08)',
+              border: '1px solid rgba(255, 255, 255, 0.12)',
+              fontSize: '10.5px',
+              letterSpacing: '0.06em',
+              fontWeight: 700,
+              textTransform: 'uppercase',
+              color: '#00E5FF'
             }}
           >
-            <TrainTrack size={36} color="var(--accent-primary)" />
+            <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#00E5FF', boxShadow: '0 0 8px #00E5FF' }} />
+            <span>Amritsar Railway Sector</span>
           </motion.div>
 
-          {/* FATAKFORECAST TITLE */}
+          {/* SKIP BUTTON */}
+          <motion.button
+            onClick={triggerExit}
+            initial={{ opacity: 0, x: 10 }}
+            animate={{ opacity: 1, x: 0 }}
+            whileHover={{ scale: 1.05, backgroundColor: 'rgba(255, 255, 255, 0.18)' }}
+            whileTap={{ scale: 0.95 }}
+            transition={{ delay: 0.2 }}
+            style={{
+              background: 'rgba(255, 255, 255, 0.12)',
+              border: '1px solid rgba(255, 255, 255, 0.22)',
+              backdropFilter: 'blur(8px)',
+              color: '#FFFFFF',
+              fontSize: '11.5px',
+              fontWeight: 600,
+              padding: '6px 14px',
+              borderRadius: '24px',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '4px',
+              outline: 'none',
+              boxShadow: '0 4px 16px rgba(0, 0, 0, 0.4)'
+            }}
+            aria-label="Skip intro"
+          >
+            <span>Skip</span>
+            <ChevronRight size={13} />
+          </motion.button>
+        </div>
+
+        {/* CINEMATIC SVG CANVAS (SCENE: TRACKS, TRAIN HEADLIGHTS, WARNING LIGHTS, LOWERING BARRIER) */}
+        <div style={{
+          position: 'relative',
+          width: '100%',
+          maxWidth: '540px',
+          height: '280px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center'
+        }}>
+          <svg 
+            width="100%" 
+            height="100%" 
+            viewBox="0 0 500 280" 
+            fill="none" 
+            style={{ overflow: 'visible' }}
+          >
+            <defs>
+              {/* Electric Cyan Glow Filter */}
+              <filter id="cyanGlow" x="-20%" y="-20%" width="140%" height="140%">
+                <feGaussianBlur stdDeviation="4" result="blur" />
+                <feComposite in="SourceGraphic" in2="blur" operator="over" />
+              </filter>
+              {/* Red Flasher Glow Filter */}
+              <filter id="redGlow" x="-50%" y="-50%" width="200%" height="200%">
+                <feGaussianBlur stdDeviation="6" result="blur" />
+                <feComposite in="SourceGraphic" in2="blur" operator="over" />
+              </filter>
+              {/* Headlight Beam Linear Gradient */}
+              <linearGradient id="headlightBeam" x1="0%" y1="0%" x2="0%" y2="100%">
+                <stop offset="0%" stopColor="#FFFFFF" stopOpacity="0.85" />
+                <stop offset="40%" stopColor="#FFF2A3" stopOpacity="0.45" />
+                <stop offset="100%" stopColor="#00E5FF" stopOpacity="0.0" />
+              </linearGradient>
+              {/* Barrier Stripes Pattern */}
+              <pattern id="barrierStripes" width="20" height="20" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+                <rect width="10" height="20" fill="#E53935" />
+                <rect x="10" width="10" height="20" fill="#FFFFFF" />
+              </pattern>
+            </defs>
+
+            {/* 1. PERSPECTIVE RAILWAY TRACKS (Converging to Center 250, 95) */}
+            {/* Ground Bed */}
+            <motion.polygon
+              points="242,95 258,95 380,265 120,265"
+              fill="rgba(11, 25, 48, 0.4)"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ duration: 0.6 }}
+            />
+
+            {/* Sleepers / Cross Ties in perspective */}
+            {[
+              { y: 110, w: 28 },
+              { y: 125, w: 42 },
+              { y: 145, w: 64 },
+              { y: 170, w: 96 },
+              { y: 200, w: 140 },
+              { y: 235, w: 200 }
+            ].map((tie, idx) => (
+              <motion.line
+                key={idx}
+                x1={250 - tie.w / 2}
+                y1={tie.y}
+                x2={250 + tie.w / 2}
+                y2={tie.y}
+                stroke="#1B3358"
+                strokeWidth={3 + idx * 0.8}
+                strokeLinecap="round"
+                initial={{ opacity: 0, scaleX: 0 }}
+                animate={{ opacity: 0.9, scaleX: 1 }}
+                transition={{ delay: 0.15 + idx * 0.08, duration: 0.3 }}
+              />
+            ))}
+
+            {/* Left Electric Rail */}
+            <motion.line
+              x1="244"
+              y1="95"
+              x2="140"
+              y2="265"
+              stroke="#00E5FF"
+              strokeWidth="3.5"
+              strokeLinecap="round"
+              filter="url(#cyanGlow)"
+              initial={{ pathLength: 0 }}
+              animate={{ pathLength: 1 }}
+              transition={{ duration: 0.85, ease: 'easeOut' }}
+            />
+
+            {/* Right Electric Rail */}
+            <motion.line
+              x1="256"
+              y1="95"
+              x2="360"
+              y2="265"
+              stroke="#00E5FF"
+              strokeWidth="3.5"
+              strokeLinecap="round"
+              filter="url(#cyanGlow)"
+              initial={{ pathLength: 0 }}
+              animate={{ pathLength: 1 }}
+              transition={{ duration: 0.85, ease: 'easeOut' }}
+            />
+
+            {/* Center Track Power/Signal Line */}
+            <motion.line
+              x1="250"
+              y1="95"
+              x2="250"
+              y2="265"
+              stroke="#007799"
+              strokeWidth="1.2"
+              strokeDasharray="4 6"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 0.6 }}
+              transition={{ delay: 0.4, duration: 0.5 }}
+            />
+
+            {/* 2. APPROACHING TRAIN & POWERFUL HEADLIGHT BEAMS */}
+            <g>
+              {/* Left Headlight Light Cone */}
+              <motion.polygon
+                points="242,94 170,250 240,250"
+                fill="url(#headlightBeam)"
+                initial={{ opacity: 0, scale: 0.3 }}
+                animate={{ 
+                  opacity: [0, 0.4, 0.7, 0.5],
+                  scale: [0.3, 0.7, 1.1, 1]
+                }}
+                transition={{ delay: 0.5, duration: 1.6, ease: 'easeOut' }}
+              />
+              {/* Right Headlight Light Cone */}
+              <motion.polygon
+                points="258,94 260,250 330,250"
+                fill="url(#headlightBeam)"
+                initial={{ opacity: 0, scale: 0.3 }}
+                animate={{ 
+                  opacity: [0, 0.4, 0.7, 0.5],
+                  scale: [0.3, 0.7, 1.1, 1]
+                }}
+                transition={{ delay: 0.5, duration: 1.6, ease: 'easeOut' }}
+              />
+
+              {/* Train Locomotive Front Silhouette */}
+              <motion.path
+                d="M236,75 Q250,70 264,75 L267,98 Q250,102 233,98 Z"
+                fill="#0F223D"
+                stroke="#00E5FF"
+                strokeWidth="1.5"
+                initial={{ scale: 0.4, opacity: 0, y: 15 }}
+                animate={{ scale: 1, opacity: 1, y: 0 }}
+                transition={{ delay: 0.45, duration: 1.4, ease: [0.16, 1, 0.3, 1] }}
+              />
+
+              {/* Windshield */}
+              <motion.path
+                d="M238,78 L262,78 L260,86 L240,86 Z"
+                fill="#16395A"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 0.9 }}
+                transition={{ delay: 0.7 }}
+              />
+
+              {/* Left Headlamp (Bright Glow) */}
+              <motion.circle
+                cx="241"
+                cy="92"
+                r="3.5"
+                fill="#FFFFFF"
+                initial={{ scale: 0 }}
+                animate={{ 
+                  scale: [0, 1.8, 1.4],
+                  boxShadow: '0 0 16px #FFFFFF'
+                }}
+                transition={{ delay: 0.55, duration: 0.8 }}
+              />
+              {/* Right Headlamp (Bright Glow) */}
+              <motion.circle
+                cx="259"
+                cy="92"
+                r="3.5"
+                fill="#FFFFFF"
+                initial={{ scale: 0 }}
+                animate={{ 
+                  scale: [0, 1.8, 1.4]
+                }}
+                transition={{ delay: 0.55, duration: 0.8 }}
+              />
+            </g>
+
+            {/* 3. LEVEL CROSSING SIGNAL POST & WIG-WAG FLASHING LIGHTS */}
+            <g id="crossingSignalPost">
+              {/* Mast Pole (Right side 395, 110) */}
+              <line x1="400" y1="90" x2="400" y2="230" stroke="#8A99AD" strokeWidth="4" strokeLinecap="round" />
+              <rect x="390" y="226" width="20" height="6" rx="2" fill="#5A6878" />
+
+              {/* Crossbuck "X" Sign (Railway Crossing) */}
+              <line x1="388" y1="96" x2="412" y2="120" stroke="#FFFFFF" strokeWidth="3" strokeLinecap="round" />
+              <line x1="412" y1="96" x2="388" y2="120" stroke="#FFFFFF" strokeWidth="3" strokeLinecap="round" />
+
+              {/* Flasher Crossbar */}
+              <line x1="378" y1="134" x2="422" y2="134" stroke="#485566" strokeWidth="3" />
+
+              {/* Left Flasher Lamp */}
+              <circle cx="380" cy="134" r="7" fill="#1C2430" stroke="#3A4656" strokeWidth="1.5" />
+              <motion.circle
+                cx="380"
+                cy="134"
+                r="5"
+                fill="#FF3B30"
+                filter="url(#redGlow)"
+                animate={{ 
+                  opacity: [1, 0.15, 1, 0.15, 1],
+                  scale: [1.2, 0.8, 1.2, 0.8, 1.2]
+                }}
+                transition={{ 
+                  repeat: Infinity, 
+                  duration: 0.9, 
+                  ease: 'easeInOut' 
+                }}
+              />
+
+              {/* Right Flasher Lamp (Alternates with Left) */}
+              <circle cx="420" cy="134" r="7" fill="#1C2430" stroke="#3A4656" strokeWidth="1.5" />
+              <motion.circle
+                cx="420"
+                cy="134"
+                r="5"
+                fill="#FF3B30"
+                filter="url(#redGlow)"
+                animate={{ 
+                  opacity: [0.15, 1, 0.15, 1, 0.15],
+                  scale: [0.8, 1.2, 0.8, 1.2, 0.8]
+                }}
+                transition={{ 
+                  repeat: Infinity, 
+                  duration: 0.9, 
+                  ease: 'easeInOut' 
+                }}
+              />
+            </g>
+
+            {/* 4. ANIMATED LOWERING CROSSING BOOM BARRIER */}
+            {/* Barrier Gate Pivot Stanchion (Left side 95, 190) */}
+            <g id="barrierGatePivot">
+              <rect x="88" y="170" width="14" height="60" rx="3" fill="#3D4B5C" stroke="#222B38" strokeWidth="1.5" />
+              <circle cx="95" cy="180" r="6" fill="#FF7849" />
+              <circle cx="95" cy="180" r="2.5" fill="#FFFFFF" />
+            </g>
+
+            {/* Animated Rotating Boom Barrier Arm */}
+            {/* Starts raised at -60 deg, rotates down to horizontal 0 deg */}
+            <motion.g
+              initial={{ rotate: -55 }}
+              animate={{ rotate: 0 }}
+              transition={{ 
+                delay: 1.1, 
+                duration: 1.1, 
+                ease: [0.25, 1, 0.5, 1] 
+              }}
+              style={{ originX: '95px', originY: '180px' }}
+            >
+              {/* Barrier Arm Body */}
+              <rect
+                x="95"
+                y="175"
+                width="280"
+                height="10"
+                rx="3"
+                fill="url(#barrierStripes)"
+                stroke="#B71C1C"
+                strokeWidth="1.2"
+                style={{ filter: 'drop-shadow(0 4px 10px rgba(0,0,0,0.6))' }}
+              />
+              {/* Barrier Tip Red LED Warning Marker */}
+              <circle cx="372" cy="180" r="3" fill="#FF3B30" filter="url(#redGlow)" />
+            </motion.g>
+          </svg>
+        </div>
+
+        {/* 5. BRAND EMBLEM & TAGLINE REVEAL */}
+        <div style={{
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          marginTop: '10px',
+          zIndex: 40,
+          textAlign: 'center',
+          padding: '0 20px'
+        }}>
+          {/* LOGO TITLE */}
           <motion.div
-            initial={{ opacity: 0, y: 12 }}
-            animate={{ opacity: 1, y: 0 }}
+            initial={{ opacity: 0, y: 16, scale: 0.92 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
             transition={{
-              duration: 0.45,
-              delay: 0.35,
+              delay: 1.8,
+              duration: 0.65,
               ease: [0.16, 1, 0.3, 1]
             }}
             style={{
-              fontFamily: 'var(--font-brand)',
-              fontSize: '30px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '4px',
+              fontSize: '32px',
               fontWeight: 800,
-              letterSpacing: '0.04em',
-              color: 'var(--accent-emphasis)'
+              letterSpacing: '0.04em'
             }}
           >
-            <span>FATAK</span>
-            <span style={{ color: 'var(--accent-tangerine)' }}>FORECAST</span>
+            <span style={{ color: '#FFFFFF', textShadow: '0 0 20px rgba(0, 229, 255, 0.35)' }}>
+              FATAK
+            </span>
+            <span style={{ color: '#FF7849', textShadow: '0 0 20px rgba(255, 120, 73, 0.4)' }}>
+              FORECAST
+            </span>
           </motion.div>
 
-          {/* BRAND TAGLINE */}
+          {/* SIGNATURE TAGLINE */}
           <motion.div
-            initial={{ opacity: 0, y: 8 }}
+            initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{
-              duration: 0.4,
-              delay: 0.6,
+              delay: 2.1,
+              duration: 0.55,
               ease: 'easeOut'
             }}
             style={{
-              marginTop: '5px',
-              fontSize: '14px',
-              fontWeight: 600,
-              color: 'var(--text-secondary)',
-              letterSpacing: '-0.01em'
+              marginTop: '6px',
+              fontSize: '15px',
+              fontWeight: 500,
+              color: '#A0B2C6',
+              letterSpacing: '0.01em'
             }}
           >
             Know Before the Fatak Closes.
           </motion.div>
 
-          {/* PROGRESSIVE RAILWAY TRACK DRAWING */}
-          <div style={{ marginTop: '26px', width: '260px', height: '24px', position: 'relative' }}>
-            <svg width="260" height="24" viewBox="0 0 260 24" fill="none">
-              {/* Upper Rail */}
-              <motion.line
-                x1="0"
-                y1="5"
-                x2="260"
-                y2="5"
-                stroke="var(--accent-primary)"
-                strokeWidth="2.5"
-                strokeLinecap="round"
-                initial={{ pathLength: 0 }}
-                animate={{ pathLength: 1 }}
-                transition={{ duration: 0.8, delay: 0.7, ease: 'easeInOut' }}
-              />
+          {/* GLOWING DIVIDER LINE */}
+          <motion.div
+            initial={{ scaleX: 0, opacity: 0 }}
+            animate={{ scaleX: 1, opacity: 1 }}
+            transition={{ delay: 2.3, duration: 0.7, ease: 'easeInOut' }}
+            style={{
+              marginTop: '18px',
+              width: '180px',
+              height: '2px',
+              background: 'linear-gradient(90deg, transparent, #00E5FF, #FF7849, transparent)'
+            }}
+          />
 
-              {/* Lower Rail */}
-              <motion.line
-                x1="0"
-                y1="19"
-                x2="260"
-                y2="19"
-                stroke="var(--accent-primary)"
-                strokeWidth="2.5"
-                strokeLinecap="round"
-                initial={{ pathLength: 0 }}
-                animate={{ pathLength: 1 }}
-                transition={{ duration: 0.8, delay: 0.75, ease: 'easeInOut' }}
-              />
-
-              {/* Sleepers / Cross Ties */}
-              {[20, 50, 80, 110, 140, 170, 200, 230].map((x, i) => (
-                <motion.line
-                  key={x}
-                  x1={x}
-                  y1="2"
-                  x2={x}
-                  y2="22"
-                  stroke={i % 2 === 0 ? "var(--accent-tangerine)" : "#C8E3D2"}
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  initial={{ opacity: 0, scaleY: 0 }}
-                  animate={{ opacity: 1, scaleY: 1 }}
-                  transition={{ duration: 0.25, delay: 0.75 + (i * 0.05) }}
-                />
-              ))}
-            </svg>
-          </div>
-
-          {/* AMBITIOUS REGIONAL CONTEXT */}
+          {/* ENTERING PLATFORM STATUS SUBTITLE */}
           <motion.div
             initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ delay: 1.1, duration: 0.4 }}
+            animate={{ opacity: 0.8 }}
+            transition={{ delay: 2.6, duration: 0.4 }}
             style={{
-              marginTop: '16px',
+              marginTop: '12px',
               fontSize: '11px',
               fontWeight: 600,
-              color: 'var(--text-muted)',
-              fontFamily: 'var(--font-mono)',
-              letterSpacing: '0.04em',
-              textTransform: 'uppercase'
+              color: '#667C94',
+              letterSpacing: '0.08em',
+              textTransform: 'uppercase',
+              fontFamily: 'var(--font-mono, monospace)'
             }}
           >
-            Amritsar Railway Intelligence
+            Live Rail Intelligence • Amritsar
           </motion.div>
         </div>
+
       </motion.div>
     </AnimatePresence>
   );

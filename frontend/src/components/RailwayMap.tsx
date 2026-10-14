@@ -11,6 +11,8 @@ import {
 import { RailwayCrossing, SectorTrain, RailwayCorridor } from '../types';
 import rawOsmTracks from '../data/amritsar_tracks_osm.json';
 import { findImpactingTrainForCrossing } from '../utils/trainHelpers';
+import { normalizeBearingDiff, snapToTrackGeometry, validateTrainCoordinates } from '../utils/geoUtils';
+
 
 interface RailwayMapProps {
   crossings: RailwayCrossing[];
@@ -360,6 +362,8 @@ export const RailwayMap: React.FC<RailwayMapProps> = ({
     targetBearing: number;
     startTime: number;
     durationMs: number;
+    lastObservationMs?: number;
+    isStationary?: boolean;
   }>>(new Map());
 
   // Link approaching train for selected crossing
@@ -373,14 +377,15 @@ export const RailwayMap: React.FC<RailwayMapProps> = ({
     if (!showTrains) {
       trainMarkersRef.current.forEach(m => map.removeLayer(m));
       trainMarkersRef.current.clear();
+      trainAnimStatesRef.current.clear();
       return;
     }
 
     const now = performance.now();
 
     trains.forEach(t => {
-      // Phase 2: Missing or invalid coordinates must never produce fabricated map markers
-      if (typeof t.lat !== 'number' || typeof t.lng !== 'number' || isNaN(t.lat) || isNaN(t.lng) || (t.lat === 0 && t.lng === 0)) {
+      // 1. Strict validation: Missing, invalid, or out-of-sector coordinates must NEVER produce fabricated map markers
+      if (typeof t.lat !== 'number' || typeof t.lng !== 'number' || !validateTrainCoordinates(t.lat, t.lng)) {
         if (trainMarkersRef.current.has(t.id)) {
           map.removeLayer(trainMarkersRef.current.get(t.id)!);
           trainMarkersRef.current.delete(t.id);
@@ -389,6 +394,30 @@ export const RailwayMap: React.FC<RailwayMapProps> = ({
         return;
       }
 
+      const trainLat: number = t.lat;
+      const trainLng: number = t.lng;
+
+      // 2. Out-of-order & stale observation rejection
+      const effectiveLastPing = t.lastPing || (t as any).updatedAt;
+      const obsTimestamp = t.providerObservationTimestamp 
+        ? new Date(t.providerObservationTimestamp).getTime() 
+        : (effectiveLastPing ? new Date(effectiveLastPing).getTime() : now);
+      
+      const existingAnim = trainAnimStatesRef.current.get(t.id);
+      if (existingAnim && existingAnim.lastObservationMs && obsTimestamp < existingAnim.lastObservationMs) {
+        // Reject out-of-order stale telemetry packet
+        return;
+      }
+
+      // 3. Snap to authentic OpenStreetMap track geometry
+      const isStationary = t.speedKmH === 0 || t.status === 'PLATFORM_BOARDING' || t.status === 'STATIONARY' || t.status === 'TERMINATED' || t.status === 'NOT_STARTED';
+      const snap = snapToTrackGeometry(trainLat, trainLng, rawOsmTracks as any, t.direction, 350);
+      const resolvedLat: number = snap.isSnapped ? snap.lat : trainLat;
+      const resolvedLng: number = snap.isSnapped ? snap.lng : trainLng;
+      const resolvedBearing = (snap.isSnapped && snap.bearing !== 0)
+        ? snap.bearing
+        : (typeof t.bearing === 'number' ? t.bearing : 0);
+
       const isTargeted = Boolean(linkedTrain && linkedTrain.id === t.id);
       const isVande = t.number === '22488';
       const isPassenger = t.type.toLowerCase().includes('dmu') || t.type.toLowerCase().includes('passenger') || t.number === '74688';
@@ -396,43 +425,49 @@ export const RailwayMap: React.FC<RailwayMapProps> = ({
       const themeClass = isVande ? 'vande-bharat' : (isPassenger ? 'passenger' : 'superfast');
       const themeColor = isVande ? '#38BDF8' : (isPassenger ? '#F59E0B' : '#EF4444');
 
-      // Update / Initialize animation state with smooth observation reconciliation
-      const existingAnim = trainAnimStatesRef.current.get(t.id);
+      // 4. Update / Initialize animation state with shortest-arc angular reconciliation
       if (existingAnim) {
-        let diffBearing = (t.bearing - existingAnim.currentBearing + 540) % 360 - 180;
+        const diffBearing = normalizeBearingDiff(resolvedBearing, existingAnim.currentBearing);
         trainAnimStatesRef.current.set(t.id, {
           currentLat: existingAnim.currentLat,
           currentLng: existingAnim.currentLng,
-          targetLat: t.lat,
-          targetLng: t.lng,
+          targetLat: resolvedLat,
+          targetLng: resolvedLng,
           currentBearing: existingAnim.currentBearing,
           targetBearing: existingAnim.currentBearing + diffBearing,
           startTime: now,
-          durationMs: 3000
+          durationMs: isStationary ? 500 : 3000,
+          lastObservationMs: obsTimestamp,
+          isStationary
         });
       } else {
         trainAnimStatesRef.current.set(t.id, {
-          currentLat: t.lat,
-          currentLng: t.lng,
-          targetLat: t.lat,
-          targetLng: t.lng,
-          currentBearing: t.bearing,
-          targetBearing: t.bearing,
+          currentLat: resolvedLat,
+          currentLng: resolvedLng,
+          targetLat: resolvedLat,
+          targetLng: resolvedLng,
+          currentBearing: resolvedBearing,
+          targetBearing: resolvedBearing,
           startTime: now,
-          durationMs: 3000
+          durationMs: 3000,
+          lastObservationMs: obsTimestamp,
+          isStationary
         });
       }
 
-      const spdBadgeText = isStale ? 'STALE' : (t.speedKmH > 0 ? `${Math.round(t.speedKmH)} km/h` : 'HALT');
+
+      const spdBadgeText = isStale ? 'STALE' : (isStationary ? 'HALT' : (t.speedKmH > 0 ? `${Math.round(t.speedKmH)} km/h` : 'HALT'));
       const posTypeLabel = t.positionClassification === 'PROVIDER_REPORTED_POSITION'
         ? 'Verified Live GPS'
         : t.positionClassification === 'EXTRAPOLATED_POSITION'
-        ? 'Bounded Extrapolation'
+        ? 'Permanent Way Kinematics'
+        : t.positionClassification === 'STATION_PROGRESS'
+        ? 'Station Progress (Approximate)'
         : t.positionClassification === 'SCHEDULED_POSITION'
         ? 'Stationary Timetable'
         : t.positionClassification === 'SIMULATED_POSITION'
         ? 'Synthetic Simulation'
-        : 'Track Geometry Interpolation';
+        : (snap.isSnapped ? 'Permanent Way Snapped' : 'Track Geometry Interpolation');
 
       // 3D Realistic Locomotive Consist with High-Beam Headlights
       const icon = L.divIcon({
@@ -443,12 +478,12 @@ export const RailwayMap: React.FC<RailwayMapProps> = ({
             <div class="train-radar-ping ${themeClass} ${isStale ? 'stale' : ''}"></div>
 
             <!-- 3D Perspective Scene rotated along train bearing -->
-            <div class="train-3d-scene" style="transform: rotate(${t.bearing}deg);">
+            <div class="train-3d-scene" style="transform: rotate(${resolvedBearing}deg);">
               <!-- Realistic Ground Shadow on permanent way rails -->
               <div class="train-3d-shadow"></div>
 
               <!-- High-Intensity Forward Headlight Beam on track (dimmed if stationary or stale) -->
-              <div class="train-headlight-cone" style="opacity: ${t.speedKmH === 0 || isStale ? 0.35 : 0.95};"></div>
+              <div class="train-headlight-cone" style="opacity: ${isStationary || isStale ? 0.25 : 0.95};"></div>
 
               <!-- 3D Vertical Train Consist (Locomotive Leading on Top, Coach Trailing on Bottom) -->
               <div class="train-3d-consist">
@@ -489,7 +524,7 @@ export const RailwayMap: React.FC<RailwayMapProps> = ({
         const marker = trainMarkersRef.current.get(t.id)!;
         marker.setIcon(icon);
       } else {
-        const marker = L.marker([t.lat, t.lng], { icon, zIndexOffset: 3500 }).addTo(map);
+        const marker = L.marker([resolvedLat, resolvedLng], { icon, zIndexOffset: 3500 }).addTo(map);
         marker.on('click', () => {
           handleFlyToTrain(t);
         });
@@ -497,7 +532,7 @@ export const RailwayMap: React.FC<RailwayMapProps> = ({
           <div style="font-size: 11px; font-family: var(--font-main); line-height: 1.4;">
             <strong style="color: #F1F5F9;">${t.name} (#${t.number})</strong><br/>
             <span style="color: #94A3B8;">Route: ${t.origin} ➔ ${t.destination}</span><br/>
-            <span style="color: ${themeColor}; font-weight: 600;">Speed: ${t.speedKmH} km/h • ${t.status}</span><br/>
+            <span style="color: ${themeColor}; font-weight: 600;">Speed: ${t.speedKmH ? `${t.speedKmH} km/h` : 'Stationary'} • ${t.status}</span><br/>
             <span style="color: #35C8F4; font-size: 10px;">Classification: ${posTypeLabel}</span><br/>
             <span style="color: #64748B; font-size: 10px;">Corridor: ${t.corridorId || 'Amritsar Division'}</span>
           </div>
@@ -537,18 +572,20 @@ export const RailwayMap: React.FC<RailwayMapProps> = ({
         const marker = trainMarkersRef.current.get(id);
         if (!marker) return;
 
-        // Bounded extrapolation: If no fresh server update for > 4.5s, pin to target without drifting
+        // Bounded dead-reckoning: If train is stationary or no fresh update for > 5.5s, lock to target without drifting
         const elapsedSinceObservation = now - anim.startTime;
-        if (elapsedSinceObservation > 4500) {
+        if (anim.isStationary || elapsedSinceObservation > 5500) {
           anim.currentLat = anim.targetLat;
           anim.currentLng = anim.targetLng;
         } else {
-          // Smooth glide toward reconciled target observation
+          // Smooth glide toward reconciled target observation along rails
           anim.currentLat += (anim.targetLat - anim.currentLat) * lerpFactor;
           anim.currentLng += (anim.targetLng - anim.currentLng) * lerpFactor;
         }
 
-        anim.currentBearing += (anim.targetBearing - anim.currentBearing) * lerpFactor;
+        // Shortest-arc rotation interpolation (zero 360° flip spins)
+        const diffBearing = normalizeBearingDiff(anim.targetBearing, anim.currentBearing);
+        anim.currentBearing = (anim.currentBearing + diffBearing * lerpFactor + 360) % 360;
 
         marker.setLatLng([anim.currentLat, anim.currentLng]);
 
@@ -580,6 +617,7 @@ export const RailwayMap: React.FC<RailwayMapProps> = ({
     animId = requestAnimationFrame(animate);
     return () => cancelAnimationFrame(animId);
   }, [followTrainActive, linkedTrain?.id, selectedCrossing?.id]);
+
 
   // Camera framing: Intelligently frame BOTH the crossing and its approaching train
   useEffect(() => {
@@ -677,6 +715,8 @@ export const RailwayMap: React.FC<RailwayMapProps> = ({
 
   const handleReset = () => {
     if (!mapInstanceRef.current) return;
+    setFollowTrainActive(false);
+    handleSelectTrain(null);
     mapInstanceRef.current.flyTo(AMRITSAR_CENTER, DEFAULT_ZOOM, { duration: 0.8 });
   };
 
@@ -707,14 +747,14 @@ export const RailwayMap: React.FC<RailwayMapProps> = ({
             </div>
             <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
               {selectedCrossing ? (
-                <span>Approaching <strong style={{ color: 'var(--accent-cyan)' }}>{selectedCrossing.name}</strong> • Speed: {linkedTrain.speedKmH} km/h</span>
+                <span>Approaching <strong style={{ color: 'var(--accent-cyan)' }}>{selectedCrossing.name}</strong> • Speed: {linkedTrain.speedKmH ? `${linkedTrain.speedKmH} km/h` : 'Stationary'}</span>
               ) : (
-                <span>Speed: {linkedTrain.speedKmH} km/h • Direction: {linkedTrain.direction}</span>
+                <span>Speed: {linkedTrain.speedKmH ? `${linkedTrain.speedKmH} km/h` : 'Stationary'} • Bearing: {linkedTrain.bearing}° ({linkedTrain.direction === 'DOWN' ? 'Inbound' : 'Outbound'})</span>
               )}
             </div>
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginLeft: 'auto' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginLeft: 'auto', flexWrap: 'wrap' }}>
             <button
               onClick={() => setFollowTrainActive(!followTrainActive)}
               style={{
@@ -767,6 +807,26 @@ export const RailwayMap: React.FC<RailwayMapProps> = ({
             )}
 
             <button
+              onClick={handleReset}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '4px',
+                background: 'rgba(255, 255, 255, 0.08)',
+                border: '1px solid rgba(255, 255, 255, 0.2)',
+                color: '#F1F5F9',
+                padding: '4px 8px',
+                borderRadius: '4px',
+                fontSize: '11px',
+                fontWeight: 600,
+                cursor: 'pointer'
+              }}
+              title="Return to Amritsar overview"
+            >
+              <span>🗺️ Overview</span>
+            </button>
+
+            <button
               onClick={() => {
                 handleSelectTrain(null);
                 setFollowTrainActive(false);
@@ -786,6 +846,7 @@ export const RailwayMap: React.FC<RailwayMapProps> = ({
           </div>
         </div>
       )}
+
 
       {/* INTEGRATED MAP CONTROLS BAR (CLEAN, GROUPED, PROFESSIONAL) */}
       {showControlsBar && (
@@ -1057,8 +1118,8 @@ export const RailwayMap: React.FC<RailwayMapProps> = ({
           }}>
             <div>
               <div style={{ fontSize: '10px', color: '#94A3B8', textTransform: 'uppercase' }}>Live Speed</div>
-              <div style={{ fontSize: '14px', fontWeight: 700, color: '#10B981', fontFamily: 'var(--font-mono)' }}>
-                {activeSelectedTrain.speedKmH} km/h
+              <div style={{ fontSize: '14px', fontWeight: 700, color: activeSelectedTrain.speedKmH > 0 ? '#10B981' : '#94A3B8', fontFamily: 'var(--font-mono)' }}>
+                {activeSelectedTrain.speedKmH > 0 ? `${activeSelectedTrain.speedKmH} km/h` : 'Stationary (0 km/h)'}
               </div>
             </div>
             <div>
@@ -1081,10 +1142,80 @@ export const RailwayMap: React.FC<RailwayMapProps> = ({
             </div>
           </div>
 
+          {/* Classification & Freshness */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '10.5px' }}>
+            <span style={{
+              background: activeSelectedTrain.positionClassification === 'PROVIDER_REPORTED_POSITION' ? 'rgba(16, 185, 129, 0.2)' : 'rgba(56, 189, 248, 0.15)',
+              color: activeSelectedTrain.positionClassification === 'PROVIDER_REPORTED_POSITION' ? '#10B981' : '#38BDF8',
+              border: `1px solid ${activeSelectedTrain.positionClassification === 'PROVIDER_REPORTED_POSITION' ? 'rgba(16, 185, 129, 0.4)' : 'rgba(56, 189, 248, 0.3)'}`,
+              padding: '2px 7px',
+              borderRadius: '4px',
+              fontWeight: 600
+            }}>
+              {activeSelectedTrain.positionClassification === 'PROVIDER_REPORTED_POSITION'
+                ? 'Verified Live GPS'
+                : activeSelectedTrain.positionClassification === 'EXTRAPOLATED_POSITION'
+                ? 'Permanent Way Kinematics'
+                : activeSelectedTrain.positionClassification === 'STATION_PROGRESS'
+                ? 'Station Progress (Approximate)'
+                : activeSelectedTrain.positionClassification === 'SCHEDULED_POSITION'
+                ? 'Stationary Timetable'
+                : 'Track Geometry Snapped'}
+            </span>
+            <span style={{ color: activeSelectedTrain.isStale ? '#EF4444' : '#94A3B8', fontWeight: 500 }}>
+              {activeSelectedTrain.isStale ? '⚠️ Stale (>15m)' : '✓ Live Telemetry'}
+            </span>
+          </div>
+
           {/* Location / Halt */}
           <div style={{ fontSize: '11px', color: '#94A3B8', lineHeight: 1.4 }}>
             <span style={{ color: '#F1F5F9', fontWeight: 600 }}>Location: </span>
             {activeSelectedTrain.lastReportedLocation || activeSelectedTrain.currentStationName}
+          </div>
+
+          {/* Quick Action Buttons Row */}
+          <div style={{ display: 'flex', gap: '6px' }}>
+            <button
+              onClick={() => setFollowTrainActive(!followTrainActive)}
+              style={{
+                flex: 1,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '5px',
+                background: followTrainActive ? 'rgba(16, 185, 129, 0.25)' : 'rgba(255, 255, 255, 0.08)',
+                border: `1px solid ${followTrainActive ? '#10B981' : 'rgba(255, 255, 255, 0.2)'}`,
+                borderRadius: '5px',
+                padding: '6px 10px',
+                color: followTrainActive ? '#10B981' : '#F1F5F9',
+                fontSize: '11px',
+                fontWeight: 600,
+                cursor: 'pointer'
+              }}
+            >
+              <span>{followTrainActive ? '🎥 Following' : '🎥 Follow'}</span>
+            </button>
+
+            <button
+              onClick={handleReset}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '5px',
+                background: 'rgba(255, 255, 255, 0.08)',
+                border: '1px solid rgba(255, 255, 255, 0.2)',
+                borderRadius: '5px',
+                padding: '6px 10px',
+                color: '#F1F5F9',
+                fontSize: '11px',
+                fontWeight: 600,
+                cursor: 'pointer'
+              }}
+              title="Return to Amritsar overview"
+            >
+              <span>🗺️ Overview</span>
+            </button>
           </div>
 
           {/* Action Button: View Live Timetable */}
@@ -1111,6 +1242,7 @@ export const RailwayMap: React.FC<RailwayMapProps> = ({
           </button>
         </div>
       )}
+
     </div>
   );
 };

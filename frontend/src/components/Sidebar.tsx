@@ -8,6 +8,7 @@ import {
   BarChart3, 
   Activity, 
   Bookmark,
+  Star,
   Bell,
   Settings,
   ChevronLeft, 
@@ -61,26 +62,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
     },
     {
       route: '/saved-places' as ActiveRoute,
-      label: 'Saved Places',
-      icon: Bookmark,
+      label: 'Saved Crossings',
+      icon: Star,
       badge: null
     },
     {
       route: '/notifications' as ActiveRoute,
       label: 'Notifications',
       icon: Bell,
-      badge: null
-    },
-    {
-      route: '/analytics' as ActiveRoute,
-      label: 'Analytics',
-      icon: BarChart3,
-      badge: null
-    },
-    {
-      route: '/data-health' as ActiveRoute,
-      label: 'Data Health',
-      icon: Activity,
       badge: null
     },
     {
@@ -94,8 +83,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   return (
     <aside style={{
       width: collapsed ? 'var(--sidebar-collapsed-width)' : 'var(--sidebar-width)',
-      backgroundColor: '#FFFFFF',
-      borderRight: '1px solid var(--border-soft)',
+      backgroundColor: 'var(--bg-secondary)',
+      borderRight: '1px solid var(--border-panel)',
       display: 'flex',
       flexDirection: 'column',
       justifyContent: 'space-between',
@@ -103,7 +92,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       zIndex: 30,
       userSelect: 'none',
       flexShrink: 0,
-      boxShadow: '1px 0 3px rgba(36, 40, 36, 0.03)'
+      boxShadow: '2px 0 12px rgba(0, 0, 0, 0.3)'
     }}>
       {/* NAVIGATION ITEMS */}
       <div style={{ padding: '16px 10px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
@@ -138,7 +127,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 borderRadius: 'var(--radius-md)',
                 backgroundColor: isActive ? 'var(--surface-green)' : 'transparent',
                 border: isActive ? '1px solid var(--surface-green-border)' : '1px solid transparent',
-                color: isActive ? 'var(--accent-emphasis)' : 'var(--text-primary)',
+                color: isActive ? 'var(--accent-primary)' : 'var(--text-secondary)',
                 cursor: 'pointer',
                 transition: 'all 0.15s ease',
                 width: '100%',
@@ -146,14 +135,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
               }}
               onMouseEnter={(e) => {
                 if (!isActive) {
-                  e.currentTarget.style.backgroundColor = '#FAF9F5';
-                  e.currentTarget.style.color = 'var(--accent-primary)';
+                  e.currentTarget.style.backgroundColor = 'var(--bg-surface-elevated)';
+                  e.currentTarget.style.color = 'var(--text-primary)';
                 }
               }}
               onMouseLeave={(e) => {
                 if (!isActive) {
                   e.currentTarget.style.backgroundColor = 'transparent';
-                  e.currentTarget.style.color = 'var(--text-primary)';
+                  e.currentTarget.style.color = 'var(--text-secondary)';
                 }
               }}
             >
@@ -180,7 +169,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   fontFamily: 'var(--font-mono)',
                   padding: '2px 7px',
                   borderRadius: 'var(--radius-full)',
-                  backgroundColor: item.badgeBg || '#FAF9F5',
+                  backgroundColor: item.badgeBg || 'var(--bg-secondary)',
                   color: item.badgeColor || 'var(--text-secondary)',
                   border: `1px solid ${item.badgeColor ? 'currentColor' : 'var(--border-subtle)'}`
                 }}>

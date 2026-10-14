@@ -51,7 +51,7 @@ export const DataHealthView: React.FC<DataHealthViewProps> = ({ metrics }) => {
   }, []);
 
   return (
-    <div className="page-container" style={{ paddingBottom: '90px' }}>
+    <div className="page-container">
       {/* PAGE HEADER */}
       <div className="page-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px' }}>
         <div>

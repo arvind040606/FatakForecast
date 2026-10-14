@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { RailwayCrossing } from '../types';
+import type { RailwayCrossing } from '../types.ts';
 
 /**
  * Shared Timer Scheduler (Singleton)
@@ -241,7 +241,9 @@ export function getAuthoritativeTargetEpoch(
   const cacheKey = `${crossing.id}:${type}`;
 
   if (type === 'reopen') {
-    const isClosed = crossing.status === 'CLOSED' || crossing.status === 'CLOSURE_REPORTED';
+    const isClosed = crossing.status === 'CLOSED' || 
+                     crossing.status === 'CLOSURE_REPORTED' || 
+                     crossing.status === 'CLOSURE_EXPECTED';
     if (!isClosed) {
       if (stableTargetMap.has(cacheKey)) {
         stableTargetMap.delete(cacheKey);
@@ -263,6 +265,15 @@ export function getAuthoritativeTargetEpoch(
     // 2. Relative wait duration
     if (rawTargetMs === null && typeof crossing.remainingWaitSec === 'number' && crossing.remainingWaitSec > 0) {
       rawTargetMs = nowMs + crossing.remainingWaitSec * 1000;
+    }
+
+    // Expired Target Guard: If target is in the past (>60s expired), clear and return null
+    if (rawTargetMs !== null && rawTargetMs < nowMs - 60000) {
+      if (stableTargetMap.has(cacheKey)) {
+        stableTargetMap.delete(cacheKey);
+        persistStableTargets();
+      }
+      return null;
     }
 
     // Cap reopen target to realistic railway window (at most 15 minutes = 900s)
@@ -314,15 +325,6 @@ export function getAuthoritativeTargetEpoch(
   }
 
   // type === 'closure'
-  const isClosed = crossing.status === 'CLOSED' || crossing.status === 'CLOSURE_REPORTED';
-  if (isClosed) {
-    if (stableTargetMap.has(cacheKey)) {
-      stableTargetMap.delete(cacheKey);
-      persistStableTargets();
-    }
-    return null;
-  }
-
   // 1. Authoritative ISO timestamp
   let rawTargetMs: number | null = null;
   const isoString = crossing.estimatedGateClosingTime || crossing.expectedTrainArrival;
@@ -336,6 +338,17 @@ export function getAuthoritativeTargetEpoch(
   // 2. Relative duration
   if (rawTargetMs === null && crossing.countdownAvailable && typeof crossing.timeToNextClosureSec === 'number' && crossing.timeToNextClosureSec > 0) {
     rawTargetMs = nowMs + crossing.timeToNextClosureSec * 1000;
+  }
+
+  const isClosed = crossing.status === 'CLOSED' || 
+                   crossing.status === 'CLOSURE_REPORTED' ||
+                   (crossing.status === 'CLOSURE_EXPECTED' && rawTargetMs !== null && rawTargetMs <= nowMs);
+  if (isClosed || (rawTargetMs !== null && rawTargetMs <= nowMs)) {
+    if (stableTargetMap.has(cacheKey)) {
+      stableTargetMap.delete(cacheKey);
+      persistStableTargets();
+    }
+    return null;
   }
 
   if (rawTargetMs === null) {

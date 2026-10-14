@@ -38,11 +38,11 @@ export const TrainMovementsView: React.FC<TrainMovementsViewProps> = ({
   // Friendly commuter status helpers
   const getDisplayStatus = (train: SectorTrain) => {
     if (train.status === 'CANCELLED') return { label: 'Cancelled', color: 'var(--critical-red)', bg: 'var(--status-closed-bg)', border: 'var(--status-closed-border)' };
-    if (train.status === 'NOT_STARTED') return { label: 'Yet to start', color: 'var(--text-secondary)', bg: '#FAF9F5', border: 'var(--border-subtle)' };
-    if (train.status === 'TERMINATED') return { label: 'Completed', color: 'var(--text-muted)', bg: '#FAF9F5', border: 'var(--border-subtle)' };
+    if (train.status === 'NOT_STARTED') return { label: 'Yet to start', color: 'var(--text-secondary)', bg: 'var(--bg-secondary)', border: 'var(--border-subtle)' };
+    if (train.status === 'TERMINATED') return { label: 'Completed', color: 'var(--text-muted)', bg: 'var(--bg-secondary)', border: 'var(--border-subtle)' };
     if (train.status === 'CROSSING_GATE') return { label: 'At Level Crossing', color: 'var(--critical-red)', bg: 'var(--status-closed-bg)', border: 'var(--status-closed-border)' };
-    if (train.status === 'IN_TRANSIT' || train.status === 'APPROACHING_STATION') return { label: 'In Transit', color: 'var(--status-open)', bg: 'var(--surface-green)', border: 'var(--surface-green-border)' };
-    return { label: train.dataState === 'LIVE' ? 'In Transit' : 'Scheduled', color: 'var(--status-open)', bg: 'var(--surface-green)', border: 'var(--surface-green-border)' };
+    if (train.status === 'IN_TRANSIT' || train.status === 'APPROACHING_STATION') return { label: 'In Transit', color: 'var(--status-open)', bg: 'rgba(16, 185, 129, 0.15)', border: 'rgba(16, 185, 129, 0.3)' };
+    return { label: train.dataState === 'LIVE' ? 'In Transit' : 'Scheduled', color: 'var(--status-open)', bg: 'rgba(16, 185, 129, 0.15)', border: 'rgba(16, 185, 129, 0.3)' };
   };
 
   const filteredTrains = trains.filter(t => {
@@ -59,7 +59,7 @@ export const TrainMovementsView: React.FC<TrainMovementsViewProps> = ({
   });
 
   return (
-    <div className="page-container" style={{ paddingBottom: '90px' }}>
+    <div className="page-container">
       {/* PAGE HEADER */}
       <div className="page-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '14px' }}>
         <div>
@@ -75,7 +75,7 @@ export const TrainMovementsView: React.FC<TrainMovementsViewProps> = ({
           <div style={{
             display: 'flex',
             alignItems: 'center',
-            backgroundColor: '#FFFFFF',
+            backgroundColor: 'var(--bg-secondary)',
             border: '1px solid var(--border-soft)',
             borderRadius: 'var(--radius-md)',
             padding: '7px 12px',
@@ -102,7 +102,7 @@ export const TrainMovementsView: React.FC<TrainMovementsViewProps> = ({
           {/* FILTER TABS */}
           <div style={{
             display: 'flex',
-            backgroundColor: '#FFFFFF',
+            backgroundColor: 'var(--bg-secondary)',
             border: '1px solid var(--border-soft)',
             borderRadius: 'var(--radius-md)',
             padding: '3px',
@@ -117,9 +117,9 @@ export const TrainMovementsView: React.FC<TrainMovementsViewProps> = ({
                 key={tab.id}
                 onClick={() => setFilterSector(tab.id as any)}
                 style={{
-                  backgroundColor: filterSector === tab.id ? 'var(--surface-green)' : 'transparent',
-                  color: filterSector === tab.id ? 'var(--accent-emphasis)' : 'var(--text-secondary)',
-                  border: filterSector === tab.id ? '1px solid var(--surface-green-border)' : '1px solid transparent',
+                  backgroundColor: filterSector === tab.id ? 'rgba(56, 189, 248, 0.15)' : 'transparent',
+                  color: filterSector === tab.id ? 'var(--accent-primary)' : 'var(--text-secondary)',
+                  border: filterSector === tab.id ? '1px solid var(--accent-primary)' : '1px solid transparent',
                   padding: '6px 12px',
                   borderRadius: 'var(--radius-sm)',
                   fontSize: '11.5px',
@@ -135,7 +135,7 @@ export const TrainMovementsView: React.FC<TrainMovementsViewProps> = ({
           {/* VIEW MODE TOGGLE (CARDS / TABLE) */}
           <div className="hide-on-mobile" style={{
             display: 'flex',
-            backgroundColor: '#FFFFFF',
+            backgroundColor: 'var(--bg-secondary)',
             border: '1px solid var(--border-soft)',
             borderRadius: 'var(--radius-md)',
             padding: '3px',
@@ -145,9 +145,9 @@ export const TrainMovementsView: React.FC<TrainMovementsViewProps> = ({
               onClick={() => setViewMode('cards')}
               title="Cards View"
               style={{
-                backgroundColor: viewMode === 'cards' ? 'var(--surface-green)' : 'transparent',
-                color: viewMode === 'cards' ? 'var(--accent-emphasis)' : 'var(--text-muted)',
-                border: viewMode === 'cards' ? '1px solid var(--surface-green-border)' : '1px solid transparent',
+                backgroundColor: viewMode === 'cards' ? 'rgba(56, 189, 248, 0.15)' : 'transparent',
+                color: viewMode === 'cards' ? 'var(--accent-primary)' : 'var(--text-muted)',
+                border: viewMode === 'cards' ? '1px solid var(--accent-primary)' : '1px solid transparent',
                 padding: '6px 10px',
                 borderRadius: 'var(--radius-sm)',
                 cursor: 'pointer',
@@ -163,9 +163,9 @@ export const TrainMovementsView: React.FC<TrainMovementsViewProps> = ({
               onClick={() => setViewMode('table')}
               title="Table View"
               style={{
-                backgroundColor: viewMode === 'table' ? 'var(--surface-green)' : 'transparent',
-                color: viewMode === 'table' ? 'var(--accent-emphasis)' : 'var(--text-muted)',
-                border: viewMode === 'table' ? '1px solid var(--surface-green-border)' : '1px solid transparent',
+                backgroundColor: viewMode === 'table' ? 'rgba(56, 189, 248, 0.15)' : 'transparent',
+                color: viewMode === 'table' ? 'var(--accent-primary)' : 'var(--text-muted)',
+                border: viewMode === 'table' ? '1px solid var(--accent-primary)' : '1px solid transparent',
                 padding: '6px 10px',
                 borderRadius: 'var(--radius-sm)',
                 cursor: 'pointer',
@@ -185,7 +185,7 @@ export const TrainMovementsView: React.FC<TrainMovementsViewProps> = ({
       <div className="panel" style={{
         padding: '12px 18px',
         marginBottom: '20px',
-        backgroundColor: '#FFFFFF',
+        backgroundColor: 'var(--bg-surface)',
         display: 'flex',
         alignItems: 'center',
         gap: '12px'
@@ -214,7 +214,7 @@ export const TrainMovementsView: React.FC<TrainMovementsViewProps> = ({
                 key={train.id}
                 className="mobile-card"
                 style={{
-                  backgroundColor: '#FFFFFF',
+                  backgroundColor: 'var(--bg-surface)',
                   border: '1px solid var(--border-soft)',
                   borderLeft: `4px solid ${st.color}`,
                   padding: '18px',
@@ -284,7 +284,7 @@ export const TrainMovementsView: React.FC<TrainMovementsViewProps> = ({
                   gap: '8px',
                   fontSize: '12.5px',
                   color: 'var(--text-primary)',
-                  backgroundColor: '#FAF9F5',
+                  backgroundColor: 'var(--bg-secondary)',
                   border: '1px solid var(--border-subtle)',
                   padding: '10px 14px',
                   borderRadius: 'var(--radius-md)',
@@ -309,7 +309,7 @@ export const TrainMovementsView: React.FC<TrainMovementsViewProps> = ({
 
                 {/* LOCATION & SPEED DETAILS GRID */}
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '10px', fontSize: '11.5px' }}>
-                  <div style={{ backgroundColor: '#FFFFFF', padding: '9px 12px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-subtle)' }}>
+                  <div style={{ backgroundColor: 'var(--bg-secondary)', padding: '9px 12px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-subtle)' }}>
                     <div style={{ color: 'var(--text-muted)', fontSize: '10px', textTransform: 'uppercase', fontWeight: 600 }}>Current Station</div>
                     <div style={{ fontWeight: 700, color: 'var(--accent-emphasis)', marginTop: '2px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                       {train.currentStationName || train.lastReportedLocation || (train.isWithinAmritsarSector ? 'In Sector' : 'En Route')}
@@ -319,7 +319,7 @@ export const TrainMovementsView: React.FC<TrainMovementsViewProps> = ({
                     </div>
                   </div>
 
-                  <div style={{ backgroundColor: '#FFFFFF', padding: '9px 12px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-subtle)' }}>
+                  <div style={{ backgroundColor: 'var(--bg-secondary)', padding: '9px 12px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-subtle)' }}>
                     <div style={{ color: 'var(--text-muted)', fontSize: '10px', textTransform: 'uppercase', fontWeight: 600 }}>Speed &amp; Delay</div>
                     <div style={{ fontWeight: 700, fontFamily: 'var(--font-mono)', color: 'var(--accent-primary)', marginTop: '2px' }}>
                       {train.status === 'TERMINATED'

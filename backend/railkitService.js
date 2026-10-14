@@ -42,6 +42,16 @@ export class RailkitService {
     this.measuredLatencyMs = null;
     this.lastError = null;
 
+    // Circuit Breaker pattern for rate limit / quota management
+    this.circuitBreaker = {
+      state: 'CLOSED', // 'CLOSED' (healthy), 'OPEN' (tripped in backoff), 'HALF_OPEN' (probing)
+      failureCount: 0,
+      failureThreshold: 3,
+      trippedAt: null,
+      cooldownDurationMs: 5 * 60 * 1000, // 5 minutes backoff cooldown
+      probeSuccessCount: 0
+    };
+
     // Cache management: 90s TTL to prevent burning credits
     this.cache = new Map();
     this.cacheTtlMs = 90 * 1000;
@@ -140,22 +150,67 @@ export class RailkitService {
     return `${d}-${m}-${y}`;
   }
 
+  evaluateCircuitBreakerState() {
+    if (this.circuitBreaker.state === 'OPEN') {
+      const elapsed = Date.now() - (this.circuitBreaker.trippedAt || 0);
+      if (elapsed >= this.circuitBreaker.cooldownDurationMs) {
+        this.circuitBreaker.state = 'HALF_OPEN';
+        this.circuitBreaker.probeSuccessCount = 0;
+        this.status = 'PROBING';
+      }
+    }
+  }
+
+  tripCircuitBreaker(reason) {
+    this.circuitBreaker.state = 'OPEN';
+    this.circuitBreaker.trippedAt = Date.now();
+    this.isQuotaExhausted = true;
+    this.status = 'QUOTA_EXHAUSTED';
+    this.lastError = reason || 'Circuit breaker tripped: RailKit usage limit exceeded.';
+  }
+
+  resetCircuitBreaker() {
+    this.circuitBreaker.state = 'CLOSED';
+    this.circuitBreaker.failureCount = 0;
+    this.circuitBreaker.trippedAt = null;
+    this.isQuotaExhausted = false;
+    this.status = 'CONNECTED';
+  }
+
+  getCircuitBreakerStatus() {
+    this.evaluateCircuitBreakerState();
+    const cooldownRemainingSec = this.circuitBreaker.state === 'OPEN'
+      ? Math.max(0, Math.round((this.circuitBreaker.cooldownDurationMs - (Date.now() - (this.circuitBreaker.trippedAt || 0))) / 1000))
+      : 0;
+
+    return {
+      state: this.circuitBreaker.state,
+      failureCount: this.circuitBreaker.failureCount,
+      quotaExhausted: this.isQuotaExhausted,
+      lastTrippedAt: this.circuitBreaker.trippedAt ? new Date(this.circuitBreaker.trippedAt).toISOString() : null,
+      cooldownRemainingSec
+    };
+  }
+
   isAvailable() {
-    return Boolean(this.getApiKey() && !this.isQuotaExhausted && !this.isAuthError);
+    if (!this.getApiKey() || this.isAuthError) return false;
+    this.evaluateCircuitBreakerState();
+    return this.circuitBreaker.state !== 'OPEN';
   }
 
   /**
    * Fetch live train status via official RailKit SDK trackTrainV2
-   * Guaranteed: Deduplicated, cached, zero repeated retries on failure, zero credit burn
+   * Guaranteed: Circuit-breaker guarded, deduplicated, cached, response content verified
    */
   async fetchTrainLive(trainNumber, date = null) {
     const cleanNum = String(trainNumber).trim().padStart(5, '0').slice(-5);
     const dateStr = date || this.getFormattedDate();
     const cacheKey = `${cleanNum}_${dateStr}`;
 
-    // 1. Quota & Auth circuit breakers
-    if (this.isQuotaExhausted) {
-      return { success: false, quotaExhausted: true, error: 'RailKit API quota exhausted (requests paused).', latency: 0 };
+    this.evaluateCircuitBreakerState();
+    if (this.circuitBreaker.state === 'OPEN') {
+      const cooldownSec = Math.round((this.circuitBreaker.cooldownDurationMs - (Date.now() - this.circuitBreaker.trippedAt)) / 1000);
+      return { success: false, quotaExhausted: true, error: `RailKit circuit breaker OPEN in backoff (${cooldownSec}s remaining).`, latency: 0 };
     }
     if (this.isAuthError) {
       return { success: false, authError: true, error: this.lastError || 'RailKit API authentication failed.', latency: 0 };
@@ -200,9 +255,7 @@ export class RailkitService {
           // If V2 throws quota, auth or client error:
           const errMsg = String(v2Err?.message || v2Err || '');
           if (errMsg.includes('429') || errMsg.toLowerCase().includes('quota') || errMsg.toLowerCase().includes('limit exceeded')) {
-            this.isQuotaExhausted = true;
-            this.status = 'QUOTA_EXCEEDED';
-            this.lastError = 'RailKit usage limit exceeded for current billing cycle.';
+            this.tripCircuitBreaker('RailKit usage limit exceeded (HTTP 429/quota).');
             throw v2Err;
           }
           if (errMsg.includes('401') || errMsg.includes('403') || errMsg.toLowerCase().includes('unauthorized') || errMsg.toLowerCase().includes('invalid api key')) {
@@ -224,8 +277,7 @@ export class RailkitService {
           this.lastError = String(errMsg);
 
           if (this.lastError.includes('429') || this.lastError.toLowerCase().includes('limit exceeded') || this.lastError.toLowerCase().includes('quota')) {
-            this.isQuotaExhausted = true;
-            this.status = 'QUOTA_EXCEEDED';
+            this.tripCircuitBreaker(this.lastError);
           } else if (this.lastError.includes('401') || this.lastError.toLowerCase().includes('unauthorized')) {
             this.isAuthError = true;
             this.status = 'AUTH_ERROR';
@@ -237,11 +289,25 @@ export class RailkitService {
           return { success: false, error: this.lastError, latency };
         }
 
-        this.status = 'CONNECTED';
-        this.lastSuccessfulSync = new Date().toISOString();
-        this.lastError = null;
+        // PROVIDER RESPONSE VERIFICATION (Never treat mere { success: true } as proof of valid live telemetry)
+        const payloadData = rawResult.data;
+        if (!payloadData || typeof payloadData !== 'object' || (Array.isArray(payloadData.trainInfo) && payloadData.trainInfo.length === 0 && !payloadData.trainNo)) {
+          const errMsg = 'RailKit returned empty or invalid train records payload';
+          this.errorCache.set(cacheKey, { error: errMsg, timestamp: Date.now() });
+          return { success: false, error: errMsg, latency };
+        }
 
-        // Cache successful response
+        if (this.circuitBreaker.state === 'HALF_OPEN') {
+          this.circuitBreaker.probeSuccessCount++;
+          if (this.circuitBreaker.probeSuccessCount >= 2) {
+            this.resetCircuitBreaker();
+          }
+        } else {
+          this.status = 'CONNECTED';
+          this.lastError = null;
+        }
+
+        this.lastSuccessfulSync = new Date().toISOString();
         this.cache.set(cacheKey, { data: rawResult.data, timestamp: Date.now() });
         return { success: true, payload: rawResult.data, latency, fromCache: false };
 
@@ -432,20 +498,28 @@ export class RailkitService {
     // 4. Data Freshness & State Classification
     const now = Date.now();
     const updatedMs = new Date(lastUpdatedAt).getTime();
-    const ageMinutes = isNaN(updatedMs) ? 0 : (now - updatedMs) / (60 * 1000);
-    const isStale = ageMinutes > 30;
+    const ageMinutes = isNaN(updatedMs) ? 999 : (now - updatedMs) / (60 * 1000);
+    const isStale = ageMinutes > 15;
 
-    let dataState = 'SCHEDULED';
-    if (isCancelled) {
+    // Strict state classification: Never label simulated, scheduled, stale, or invalid records as LIVE
+    // Strictly distinguish LIVE, STALE, SCHEDULED, SIMULATED, and UNAVAILABLE states
+    let dataState = 'UNAVAILABLE';
+    if (Boolean(data.isSimulated || data.simulated || data.is_simulated)) {
+      dataState = 'SIMULATED';
+    } else if (isCancelled) {
       dataState = 'CANCELLED';
-    } else if (isNotStarted) {
-      dataState = 'NOT_STARTED';
+    } else if (isNotStarted || operationalStatus === 'PLATFORM_BOARDING') {
+      dataState = 'SCHEDULED';
     } else if (operationalStatus === 'TERMINATED') {
       dataState = 'TERMINATED';
     } else if (isStale) {
       dataState = 'STALE';
-    } else if (isLive) {
+    } else if (operationalStatus === 'IN_TRANSIT' && typeof lat === 'number' && typeof lng === 'number' && currentStationCode !== 'UNKNOWN') {
       dataState = 'LIVE';
+    } else if (operationalStatus === 'IN_TRANSIT') {
+      dataState = 'UNAVAILABLE';
+    } else {
+      dataState = 'SCHEDULED';
     }
 
     // 5. Build full route schedule array from RailKit route stops
@@ -703,12 +777,24 @@ export class RailkitService {
         let anyError = null;
         const auditEntries = [];
 
-        // Query in gentle chunks of 5 with a 100ms gap to respect provider rate limits while completing swiftly
-        const chunkSize = 5;
-        for (let i = 0; i < trainNumbersToQuery.length; i += chunkSize) {
+        // Prioritize active in-sector and newly discovered trains first
+        trainNumbersToQuery.sort((a, b) => {
+          const exA = this.validatedTrainsMap.get(a);
+          const exB = this.validatedTrainsMap.get(b);
+          const inSecA = exA?.isWithinAmritsarSector ? 1 : 0;
+          const inSecB = exB?.isWithinAmritsarSector ? 1 : 0;
+          return inSecB - inSecA;
+        });
+
+        // Cap to top 8 most relevant trains per cycle so each telemetry sync completes in <2 seconds
+        const batchToQuery = trainNumbersToQuery.slice(0, 8);
+
+        // Query in gentle chunks of 4 with a 50ms gap to respect provider rate limits while completing swiftly
+        const chunkSize = 4;
+        for (let i = 0; i < batchToQuery.length; i += chunkSize) {
           if (this.isQuotaExhausted || this.isAuthError) break;
 
-          const chunk = trainNumbersToQuery.slice(i, i + chunkSize);
+          const chunk = batchToQuery.slice(i, i + chunkSize);
           const results = await Promise.allSettled(chunk.map(num => this.fetchTrainLive(num)));
 
           for (let j = 0; j < results.length; j++) {
@@ -860,11 +946,14 @@ export class RailkitService {
       configured: Boolean(this.getApiKey()),
       maskedKey: this.getMaskedKey(),
       status: this.status,
+      isAvailable: this.isAvailable(),
       latencyMs: this.measuredLatencyMs,
       lastSuccessfulSync: this.lastSuccessfulSync,
       lastAttempt: this.lastAttemptTimestamp,
       lastError: this.lastError,
       quotaExhausted: this.isQuotaExhausted,
+      dataFreshnessThresholdMinutes: 15,
+      circuitBreaker: this.getCircuitBreakerStatus(),
       discoveredTrainsCount: this.discoveredTrainNumbers.length,
       cachedTrainsCount: this.cache.size,
       activeTrainsCount: this.validatedTrainsMap.size

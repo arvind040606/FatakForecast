@@ -109,11 +109,33 @@ export class GeographicValidator {
    * Comprehensive validation: Is train verified to be approaching crossing along permanent-way track?
    */
   static validateApproachingCrossing(train, crossing, corridorCoordinates) {
-    if (!train || typeof train.lat !== 'number' || typeof train.lng !== 'number' || isNaN(train.lat) || isNaN(train.lng) || (train.lat === 0 && train.lng === 0)) {
+    if (!train || typeof train.lat !== 'number' || typeof train.lng !== 'number' || isNaN(train.lat) || isNaN(train.lng) || (train.lat === 0 && train.lng === 0) || train.lat < -90 || train.lat > 90 || train.lng < -180 || train.lng > 180) {
       return {
         isValid: false,
         isApproaching: false,
+        hasCleared: false,
         rejectionReason: 'Train geographic coordinates are missing or invalid.',
+        trackDistanceKm: null
+      };
+    }
+
+    if (!crossing || typeof crossing.lat !== 'number' || typeof crossing.lng !== 'number' || isNaN(crossing.lat) || isNaN(crossing.lng) || (crossing.lat === 0 && crossing.lng === 0) || crossing.lat < -90 || crossing.lat > 90 || crossing.lng < -180 || crossing.lng > 180) {
+      return {
+        isValid: false,
+        isApproaching: false,
+        hasCleared: false,
+        rejectionReason: 'Crossing geographic coordinates are missing or invalid.',
+        trackDistanceKm: null
+      };
+    }
+
+    // Check: Stale telemetry rejection
+    if (train.isStale === true || train.dataState === 'STALE') {
+      return {
+        isValid: false,
+        isApproaching: false,
+        hasCleared: false,
+        rejectionReason: 'Train telemetry is stale (>15 minutes old). Reliable approach cannot be verified.',
         trackDistanceKm: null
       };
     }
@@ -124,17 +146,31 @@ export class GeographicValidator {
       return {
         isValid: false,
         isApproaching: false,
+        hasCleared: false,
         rejectionReason: `Train is outside Amritsar sector (${sectorCheck.distanceFromAsrKm} km away). Cannot approach Amritsar crossings.`,
         trackDistanceKm: null
       };
     }
 
-    // Check 2: Corridor match
-    if (train.corridorId && crossing.corridorId && train.corridorId !== crossing.corridorId) {
+    // Check 2: Corridor match & Track Connectivity (Avoid false associations based solely on geographic proximity)
+    if (!train.corridorId || !crossing.corridorId || train.corridorId !== crossing.corridorId) {
       return {
         isValid: false,
         isApproaching: false,
-        rejectionReason: `Train is on corridor ${train.corridorId}, but crossing is on ${crossing.corridorId}. No physical track connection.`,
+        hasCleared: false,
+        rejectionReason: `Corridor mismatch: Train corridor (${train.corridorId || 'unassigned'}) does not match crossing corridor (${crossing.corridorId || 'unassigned'}). No physical track connection.`,
+        trackDistanceKm: null
+      };
+    }
+
+    // Check 2b: Direction validation (Direction must be verified UP or DOWN)
+    const dirUpper = String(train.direction || '').toUpperCase();
+    if (dirUpper !== 'UP' && dirUpper !== 'DOWN') {
+      return {
+        isValid: false,
+        isApproaching: false,
+        hasCleared: false,
+        rejectionReason: `Train travel direction (${train.direction || 'UNKNOWN'}) is unverified. Direction is required to determine forward track approach trajectory.`,
         trackDistanceKm: null
       };
     }
@@ -311,8 +347,10 @@ export class GeographicValidator {
       isApproaching,
       isTraversing,
       hasCleared,
+      isOppositeDirection: hasCleared,
       trackDistanceKm: Number(trackDistKm.toFixed(2)),
       rejectionReason: null
     };
   }
 }
+

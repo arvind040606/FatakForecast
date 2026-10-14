@@ -43,6 +43,7 @@ function spaFallbackPlugin(): Plugin {
 export default defineConfig({
   plugins: [react(), spaFallbackPlugin()],
   server: {
+    host: true,
     port: 5173,
     proxy: {
       '/api': {

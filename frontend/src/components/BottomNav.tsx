@@ -8,6 +8,7 @@ import {
   Clock, 
   Train, 
   Bookmark, 
+  Star,
   Bell, 
   Activity, 
   BarChart3, 
@@ -17,6 +18,7 @@ import {
   ChevronRight,
   ShieldCheck
 } from 'lucide-react';
+
 import { ActiveRoute, OperationalMetrics } from '../types';
 import { nativeService } from '../services/nativeService';
 import { bottomSheetVariants } from '../utils/motion';
@@ -41,7 +43,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({
     nativeService.triggerHaptic('light');
   };
 
-  // Primary 3 Navigation Tabs + More for Android Bottom Bar
+  // Primary 5 Navigation Tabs for Android Bottom Bar
   const primaryTabs = [
     { 
       route: '/' as ActiveRoute, 
@@ -50,15 +52,25 @@ export const BottomNav: React.FC<BottomNavProps> = ({
     },
     { 
       route: '/planner' as ActiveRoute, 
-      label: 'Journey', 
+      label: 'Planner', 
       icon: Navigation 
     },
     { 
       route: '/crossings' as ActiveRoute, 
-      label: 'Crossings', 
+      label: 'Fataks', 
       icon: GitFork,
       badge: metrics.closedCount > 0 ? metrics.closedCount : undefined,
       badgeColor: 'var(--status-closed)'
+    },
+    { 
+      route: '/saved-places' as ActiveRoute, 
+      label: 'Saved', 
+      icon: Star 
+    },
+    { 
+      route: '/settings' as ActiveRoute, 
+      label: 'Settings', 
+      icon: Settings 
     }
   ];
 
@@ -80,29 +92,18 @@ export const BottomNav: React.FC<BottomNavProps> = ({
       icon: Train,
       badge: `${metrics.activeSectorTrains}`
     },
+
     { 
       route: '/saved-places' as ActiveRoute, 
-      label: 'Saved Places', 
-      desc: 'Home, work and frequent Amritsar commuter stops',
-      icon: Bookmark 
+      label: 'Saved Crossings', 
+      desc: 'Starred Amritsar railway crossings and closure alerts',
+      icon: Star 
     },
     { 
       route: '/notifications' as ActiveRoute, 
       label: 'Notifications', 
       desc: 'Departure reminders and gate alert preferences',
       icon: Bell 
-    },
-    { 
-      route: '/analytics' as ActiveRoute, 
-      label: 'Forecast Analytics', 
-      desc: 'Historical crossing wait times and reliability',
-      icon: BarChart3 
-    },
-    { 
-      route: '/data-health' as ActiveRoute, 
-      label: 'Data Health & Telemetry', 
-      desc: 'RailKit SDK, OpenStreetMap and feed status diagnostics',
-      icon: Activity 
     },
     { 
       route: '/settings' as ActiveRoute, 
@@ -122,9 +123,10 @@ export const BottomNav: React.FC<BottomNavProps> = ({
         role="navigation" 
         aria-label="Main Navigation"
         style={{
-          backgroundColor: '#FFFFFF',
-          borderTop: '1px solid var(--border-soft)',
-          boxShadow: '0 -4px 16px rgba(36, 40, 36, 0.05)'
+          backgroundColor: 'var(--bg-secondary)',
+          borderTop: '1px solid var(--border-panel)',
+          boxShadow: '0 -4px 20px rgba(0, 0, 0, 0.5)',
+          paddingBottom: 'max(6px, env(safe-area-inset-bottom, 6px))'
         }}
       >
         {primaryTabs.map((tab) => {
@@ -144,7 +146,8 @@ export const BottomNav: React.FC<BottomNavProps> = ({
                 alignItems: 'center',
                 justifyContent: 'center',
                 gap: '3px',
-                color: isActive ? 'var(--accent-primary)' : 'var(--text-secondary)'
+                color: isActive ? 'var(--accent-primary)' : 'var(--text-secondary)',
+                flex: 1
               }}
             >
               <div style={{ position: 'relative' }}>
@@ -155,7 +158,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({
                       position: 'absolute',
                       top: '-4px',
                       right: '-8px',
-                      background: tab.badgeColor || 'var(--accent-tangerine)',
+                      background: tab.badgeColor || 'var(--accent-primary)',
                       color: '#fff',
                       fontSize: '9.5px',
                       fontWeight: 700,
@@ -168,7 +171,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({
                   </span>
                 )}
               </div>
-              <span className="bottom-nav-label" style={{ fontWeight: isActive ? 700 : 500 }}>
+              <span className="bottom-nav-label" style={{ fontWeight: isActive ? 700 : 500, color: isActive ? 'var(--accent-primary)' : 'var(--text-secondary)' }}>
                 {tab.label}
               </span>
               {isActive && (
@@ -184,40 +187,6 @@ export const BottomNav: React.FC<BottomNavProps> = ({
             </button>
           );
         })}
-
-        {/* 4th TAB: MORE */}
-        <button
-          onClick={() => {
-            setMoreSheetOpen(!moreSheetOpen);
-            nativeService.triggerHaptic('light');
-          }}
-          className={`bottom-nav-item ${isMoreActive || moreSheetOpen ? 'active' : ''}`}
-          aria-expanded={moreSheetOpen}
-          style={{
-            position: 'relative',
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: '3px',
-            color: isMoreActive || moreSheetOpen ? 'var(--accent-primary)' : 'var(--text-secondary)'
-          }}
-        >
-          <Menu size={20} strokeWidth={isMoreActive || moreSheetOpen ? 2.4 : 1.8} />
-          <span className="bottom-nav-label" style={{ fontWeight: isMoreActive || moreSheetOpen ? 700 : 500 }}>
-            More
-          </span>
-          {(isMoreActive || moreSheetOpen) && (
-            <div style={{
-              position: 'absolute',
-              top: '0px',
-              width: '28px',
-              height: '3px',
-              backgroundColor: 'var(--accent-primary)',
-              borderRadius: '0 0 3px 3px'
-            }} />
-          )}
-        </button>
       </nav>
 
       {/* MORE DESTINATIONS ACTION SHEET */}
@@ -235,8 +204,8 @@ export const BottomNav: React.FC<BottomNavProps> = ({
               className="bottom-sheet-content"
               onClick={(e) => e.stopPropagation()}
               style={{
-                backgroundColor: '#FFFFFF',
-                borderTop: '1px solid var(--border-soft)',
+                backgroundColor: 'var(--bg-surface)',
+                borderTop: '1px solid var(--border-panel)',
                 boxShadow: 'var(--shadow-sheet)'
               }}
             >
@@ -296,8 +265,8 @@ export const BottomNav: React.FC<BottomNavProps> = ({
                         justifyContent: 'space-between',
                         padding: '12px 14px',
                         borderRadius: 'var(--radius-md)',
-                        background: isCurrent ? 'var(--surface-green)' : '#FAF9F5',
-                        border: isCurrent ? '1.5px solid var(--surface-green-border)' : '1px solid var(--border-subtle)',
+                        background: isCurrent ? 'var(--surface-green)' : 'var(--bg-secondary)',
+                        border: isCurrent ? '1.5px solid var(--accent-primary)' : '1px solid var(--border-subtle)',
                         cursor: 'pointer',
                         textAlign: 'left',
                         transition: 'all 0.15s ease',
@@ -309,8 +278,8 @@ export const BottomNav: React.FC<BottomNavProps> = ({
                           width: '38px',
                           height: '38px',
                           borderRadius: '10px',
-                          backgroundColor: isCurrent ? 'var(--accent-primary)' : '#FFFFFF',
-                          color: isCurrent ? '#FFFFFF' : 'var(--accent-primary)',
+                          backgroundColor: isCurrent ? 'var(--accent-primary)' : 'var(--surface-green)',
+                          color: isCurrent ? 'var(--text-on-accent)' : 'var(--accent-primary)',
                           border: isCurrent ? 'none' : '1px solid var(--border-subtle)',
                           display: 'flex',
                           alignItems: 'center',

@@ -27,6 +27,7 @@ yarn-error.log*
 Thumbs.db
 scratch_*.mjs
 backend/scratch_*.js
+scratch/
 
 
 .vercel

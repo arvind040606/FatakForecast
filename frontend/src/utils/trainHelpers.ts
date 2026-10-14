@@ -1,4 +1,5 @@
 import type { RailwayCrossing, SectorTrain } from '../types.ts';
+import { getAuthoritativeTargetEpoch, calculateRemainingSeconds, formatCountdown } from './timerManager.ts';
 
 /**
  * Resolves the verified server-provided train association for a railway crossing.
@@ -80,8 +81,9 @@ export function formatTrainSpeed(train: SectorTrain | any): string {
   if (!train) return '~55 km/h (Sectional)';
   if (train.status === 'TERMINATED') return '0 km/h (Terminus)';
   if (train.status === 'NOT_STARTED' || train.status === 'not-started') return '0 km/h (Yet to start)';
-  if (train.status === 'CANCELLED') return '0 km/h (Cancelled)';
-  if (train.status === 'PLATFORM_BOARDING' || train.status === 'STATIONARY') return '0 km/h (Platform)';
+  if (train.isStationaryAtPlatform || train.isStationary || train.status === 'PLATFORM_BOARDING' || train.status === 'STATIONARY' || train.speedKmH === 0) {
+    return 'Stationary at Platform (0 km/h)';
+  }
   if (train.hasLiveSpeedMeasurement && typeof train.liveSpeedKmH === 'number' && train.liveSpeedKmH > 0) {
     return `${train.liveSpeedKmH} km/h (GPS)`;
   }
@@ -162,4 +164,528 @@ export function getCrossingTrainDisplay(
     isApproaching: false
   };
 }
+
+export function format12h(timeInput?: string | number | null): string | null {
+  if (!timeInput) return null;
+  try {
+    const d = new Date(timeInput);
+    if (isNaN(d.getTime())) return null;
+    return d.toLocaleTimeString('en-IN', {
+      timeZone: 'Asia/Kolkata',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true
+    });
+  } catch (e) {
+    return null;
+  }
+}
+
+export interface CrossingTimingDetails {
+  statusBadge: {
+    label: 'OPEN' | 'CLOSING SOON' | 'CLOSED' | 'TIMING UNAVAILABLE' | 'CONFIRMED OPEN' | 'CONFIRMED CLOSED' | 'PREDICTED CLOSURE' | 'PREDICTED OPEN' | 'STATUS UNKNOWN';
+    color: string;
+    bg: string;
+    border: string;
+    dotColor: string;
+  };
+
+  isClosedNow: boolean;
+  isClosingSoon: boolean;
+  isOpenPassage: boolean;
+  isTimingUnavailable: boolean;
+
+  hasApproachingTrain: boolean;
+  trainName?: string;
+  trainNumber?: string;
+  trainArrivalEtaText: string;
+  trainArrivalTimeStr: string | null;
+  trainArrivalSec: number;
+  trainSpeedText: string;
+  trainDistanceKm: number | null;
+
+  closingTimeStr: string | null;
+  closingCountdownText: string | null;
+  closeSec: number;
+
+  reopeningTimeStr: string | null;
+  reopenCountdownText: string | null;
+  reopenSec: number;
+
+  closureDurationText: string;
+  closureDurationMin: number;
+
+  isMultiTrain: boolean;
+  trainCount: number;
+  confidenceLabel: string;
+  lastUpdateText: string | null;
+  activeTrain?: {
+    trainNumber: string;
+    trainName: string;
+    speedText: string;
+    direction?: string;
+    route?: string;
+    status: string;
+    dataState?: string;
+    distanceKm?: number | null;
+    timingText?: string | null;
+    isStationary?: boolean;
+    isApproaching?: boolean;
+    isReceding?: boolean;
+    isScheduled?: boolean;
+    locationText?: string | null;
+  } | null;
+
+  passingTrain?: {
+    trainNumber: string;
+    trainName: string;
+    speedText: string;
+    direction?: string;
+    route?: string;
+    status?: string;
+    dataState?: string;
+  } | null;
+
+  lastTrainPassed?: {
+    trainNumber?: string;
+    trainName?: string;
+    direction?: string;
+    distanceKm?: number;
+    passedAt?: string;
+    timestamp?: string;
+    speedKmH?: number;
+  } | null;
+  lastTrainPassedText?: string | null;
+}
+
+export function getCrossingTimingDetails(
+  crossing: RailwayCrossing,
+  nowMs: number,
+  trainList?: SectorTrain[]
+): CrossingTimingDetails {
+  // Multi-train detection
+  const subsequent = crossing.subsequentTrains || crossing.upcomingTrains?.slice(1) || [];
+  const trainCount = (crossing.totalUpcomingTrains && crossing.totalUpcomingTrains > 1) 
+    ? crossing.totalUpcomingTrains 
+    : (1 + subsequent.length);
+  const isMultiTrain = Boolean(crossing.combinedClosure?.isContinuous || trainCount > 1);
+
+  // Parse raw ISO dates
+  const closeIso = crossing.estimatedGateClosingTime || crossing.timingMetrics?.likelyClosure || (crossing as any).closure?.likelyClosure;
+  const reopenIso = crossing.combinedClosure?.closureEnd || 
+    crossing.predictedReopenTime || 
+    crossing.estimatedGateReopeningTime || 
+    crossing.timingMetrics?.likelyReopen || 
+    (crossing as any).reopening?.likelyReopen;
+
+  const rawCloseMs = closeIso ? new Date(closeIso).getTime() : null;
+  const rawReopenMs = reopenIso ? new Date(reopenIso).getTime() : null;
+  const isCloseValid = rawCloseMs !== null && !isNaN(rawCloseMs);
+  const isReopenValid = rawReopenMs !== null && !isNaN(rawReopenMs);
+
+  const isCloseInPast = isCloseValid && rawCloseMs! <= nowMs;
+  const isReopenInPast = isReopenValid && rawReopenMs! <= nowMs;
+  // If reopening was scheduled in the past by > 90 seconds (grace buffer for gate lifting):
+  const isReopenExpired = isReopenValid && (nowMs - rawReopenMs! > 90000);
+
+  // Check timing availability & confidence (OPEN status is never unavailable)
+  const isExplicitlyUnavailable = (
+    crossing.status === 'UNKNOWN' || 
+    crossing.predictionConfidence === 'UNAVAILABLE' || 
+    crossing.gateStatusClassification === 'STATUS UNAVAILABLE' || 
+    crossing.gateStatusClassification === 'DATA UNAVAILABLE' ||
+    crossing.gateStatusClassification === 'STATUS UNKNOWN' ||
+    crossing.gateStatusClassification === 'UNAVAILABLE'
+  ) && crossing.status !== 'OPEN';
+
+  // If a previously predicted closure has expired and there is no active live approaching train:
+  const isPredictionExpired = (crossing.status === 'CLOSED' || crossing.status === 'CLOSURE_EXPECTED') && isReopenExpired;
+  const isTimingUnavailable = isExplicitlyUnavailable || isPredictionExpired;
+
+  // 1. Duration of closure (strictly derived from genuine kinematics or labelled as estimate)
+  let closureDurationMin = 0;
+  let isDurationEstimated = false;
+
+  if (crossing.combinedClosure?.combinedDurationMinutes && crossing.combinedClosure.combinedDurationMinutes > 0) {
+    closureDurationMin = Math.round(crossing.combinedClosure.combinedDurationMinutes);
+  } else if (crossing.combinedClosure?.durationMinutes && crossing.combinedClosure.durationMinutes > 0) {
+    closureDurationMin = Math.round(crossing.combinedClosure.durationMinutes);
+  } else if (crossing.closureDurationMin && crossing.closureDurationMin > 0) {
+    closureDurationMin = Math.round(crossing.closureDurationMin);
+  } else if (isCloseValid && isReopenValid && rawReopenMs! > rawCloseMs!) {
+    closureDurationMin = Math.round((rawReopenMs! - rawCloseMs!) / 60000);
+  } else if (crossing.avgClosureDurationMin && crossing.avgClosureDurationMin > 0) {
+    closureDurationMin = Math.round(crossing.avgClosureDurationMin);
+    isDurationEstimated = true;
+  }
+
+  // 2. Closure target calculation (strictly future epoch)
+  let closeSec = 0;
+  const closeTarget = getAuthoritativeTargetEpoch(crossing, 'closure', nowMs);
+  if (closeTarget !== null && closeTarget > nowMs) {
+    closeSec = calculateRemainingSeconds(closeTarget, nowMs);
+  } else if (crossing.countdownAvailable && typeof crossing.timeToNextClosureSec === 'number' && crossing.timeToNextClosureSec > 0) {
+    closeSec = crossing.timeToNextClosureSec;
+  } else if (isCloseValid && rawCloseMs! > nowMs) {
+    closeSec = Math.max(0, Math.floor((rawCloseMs! - nowMs) / 1000));
+  }
+
+  // 3. State Determination
+  // Train proximity is NOT mechanical barrier confirmation; barrier sensors are uninstrumented.
+  const isExplicitlyClosed = crossing.status === 'CLOSED' || crossing.status === 'CLOSURE_REPORTED';
+  const isClosureExpected = crossing.status === 'CLOSURE_EXPECTED';
+  const isApproachingStatus = crossing.status === 'APPROACHING';
+
+  // Closed only if not unavailable, not expired, and closure epoch is reached
+  const isClosedNow = !isTimingUnavailable && (
+    (isExplicitlyClosed && (!isReopenValid || !isReopenExpired)) || 
+    (isClosureExpected && closeSec <= 0 && (!isReopenValid || !isReopenExpired))
+  );
+
+  const isClosingSoon = !isTimingUnavailable && !isClosedNow && (
+    isApproachingStatus || 
+    (isClosureExpected && closeSec > 0) || 
+    (closeSec > 0 && closeSec <= 600)
+  );
+
+  const isOpenPassage = !isTimingUnavailable && !isClosedNow && !isClosingSoon;
+
+  // 4. Reopen target calculation (strictly future epoch)
+  let reopenSec = 0;
+  if (isClosedNow) {
+    const reopenTarget = getAuthoritativeTargetEpoch(crossing, 'reopen', nowMs);
+    if (reopenTarget !== null && reopenTarget > nowMs) {
+      reopenSec = calculateRemainingSeconds(reopenTarget, nowMs);
+    } else if (typeof crossing.remainingWaitSec === 'number' && crossing.remainingWaitSec > 0) {
+      reopenSec = crossing.remainingWaitSec;
+    } else if (isReopenValid && rawReopenMs! > nowMs) {
+      reopenSec = Math.max(0, Math.floor((rawReopenMs! - nowMs) / 1000));
+    }
+  }
+
+  // 5. Clock strings: NEVER format a past timestamp as an expected future time!
+  let closingTimeStr: string | null = null;
+  if (isClosedNow) {
+    closingTimeStr = 'Barriers locked';
+  } else if (closeSec > 0) {
+    const cEpoch = (closeTarget && closeTarget > nowMs) ? closeTarget : (isCloseValid && rawCloseMs! > nowMs ? rawCloseMs! : nowMs + closeSec * 1000);
+    closingTimeStr = format12h(cEpoch);
+  }
+
+  let reopeningTimeStr: string | null = null;
+  if (isClosedNow) {
+    if (reopenSec > 0) {
+      const rEpoch = (isReopenValid && rawReopenMs! > nowMs) ? rawReopenMs! : nowMs + reopenSec * 1000;
+      reopeningTimeStr = format12h(rEpoch);
+    }
+  }
+
+  // 6. Train Arrival calculation (strictly future arrival)
+  const upcomingTrain = (crossing as any).upcomingTrain || 
+                        (crossing as any).primaryTrain || 
+                        crossing.upcomingTrains?.[0] || 
+                        null;
+  const trainArrivalIso = crossing.expectedTrainArrival || 
+                          upcomingTrain?.estimatedPassageTime || 
+                          crossing.timingMetrics?.passageTime || 
+                          null;
+  
+  let trainArrivalSec = 0;
+  let trainArrivalTimeStr: string | null = null;
+  if (trainArrivalIso) {
+    const arrEpoch = new Date(trainArrivalIso).getTime();
+    if (!isNaN(arrEpoch) && arrEpoch > nowMs) {
+      trainArrivalSec = Math.max(0, Math.floor((arrEpoch - nowMs) / 1000));
+      trainArrivalTimeStr = format12h(arrEpoch);
+    }
+  } else if (typeof crossing.estimatedTimeToArrivalSec === 'number' && crossing.estimatedTimeToArrivalSec > 0) {
+    trainArrivalSec = crossing.estimatedTimeToArrivalSec;
+    trainArrivalTimeStr = format12h(nowMs + trainArrivalSec * 1000);
+  } else if (upcomingTrain?.etaMinutes && upcomingTrain.etaMinutes > 0) {
+    trainArrivalSec = Math.round(upcomingTrain.etaMinutes * 60);
+    trainArrivalTimeStr = format12h(nowMs + trainArrivalSec * 1000);
+  }
+
+  // 7. Countdowns (no fake precision, no ~0s, no negative numbers)
+  const closingCountdownText = closeSec > 60 
+    ? `in ~${Math.round(closeSec / 60)} min` 
+    : (closeSec > 0 ? 'in <1 min' : null);
+
+  const reopenCountdownText = (isClosedNow && reopenSec > 60)
+    ? `in ~${Math.round(reopenSec / 60)} min` 
+    : (isClosedNow && reopenSec > 0 ? 'in <1 min' : null);
+
+  // 8. Readable Train ETA line & Reopening statement
+  let trainArrivalEtaText = '';
+  if (isTimingUnavailable) {
+    trainArrivalEtaText = isPredictionExpired
+      ? 'Prediction expired · Telemetry feed offline'
+      : (crossing.statusReason || 'Telemetry feed offline · Gate timing unverified');
+  } else if (isClosedNow) {
+    if (reopeningTimeStr) {
+      trainArrivalEtaText = reopenCountdownText 
+        ? `Expected to reopen at ${reopeningTimeStr} (${reopenCountdownText})`
+        : `Expected to reopen at ${reopeningTimeStr}`;
+    } else if (isReopenInPast) {
+      trainArrivalEtaText = 'Reopening overdue · Verifying track clearance';
+    } else {
+      trainArrivalEtaText = 'Barriers locked · Reopening shortly';
+    }
+  } else if (upcomingTrain || isClosingSoon) {
+    if (trainArrivalSec > 60) {
+      const arrMin = Math.round(trainArrivalSec / 60);
+      trainArrivalEtaText = trainArrivalTimeStr 
+        ? `Train arriving in ${arrMin} min (${trainArrivalTimeStr})`
+        : `Train arriving in ${arrMin} min`;
+    } else if (trainArrivalSec > 0) {
+      trainArrivalEtaText = trainArrivalTimeStr 
+        ? `Train arriving in <1 min (${trainArrivalTimeStr})`
+        : `Train arriving in <1 min`;
+    } else {
+      trainArrivalEtaText = 'Train approaching crossing';
+    }
+  } else {
+    trainArrivalEtaText = 'Clear passage · No approaching trains';
+  }
+
+  // 9. Status badge details (Strictly distinguish CONFIRMED OPEN, CONFIRMED CLOSED, PREDICTED CLOSURE, and STATUS UNKNOWN)
+  let statusBadge: CrossingTimingDetails['statusBadge'];
+  if (crossing.activeDrill || crossing.closureReported || crossing.observedPhysicalGateState === 'CLOSED') {
+    statusBadge = {
+      label: 'CONFIRMED CLOSED',
+      color: '#ef4444',
+      bg: 'rgba(239, 68, 68, 0.12)',
+      border: 'rgba(239, 68, 68, 0.3)',
+      dotColor: '#ef4444'
+    };
+  } else if (crossing.observedPhysicalGateState === 'OPEN' || crossing.confirmedOpenReport === true) {
+    statusBadge = {
+      label: 'CONFIRMED OPEN',
+      color: '#10b981',
+      bg: 'rgba(16, 185, 129, 0.12)',
+      border: 'rgba(16, 185, 129, 0.3)',
+      dotColor: '#10b981'
+    };
+  } else if (isTimingUnavailable || crossing.status === 'UNKNOWN') {
+    statusBadge = {
+      label: 'STATUS UNKNOWN',
+      color: '#94a3b8',
+      bg: 'rgba(148, 163, 184, 0.12)',
+      border: 'rgba(148, 163, 184, 0.3)',
+      dotColor: '#94a3b8'
+    };
+  } else if (isClosedNow) {
+    statusBadge = {
+      label: 'PREDICTED CLOSURE',
+      color: '#ef4444',
+      bg: 'rgba(239, 68, 68, 0.12)',
+      border: 'rgba(239, 68, 68, 0.3)',
+      dotColor: '#ef4444'
+    };
+  } else if (isClosingSoon) {
+    statusBadge = {
+      label: 'PREDICTED CLOSURE',
+      color: '#f59e0b',
+      bg: 'rgba(245, 158, 11, 0.12)',
+      border: 'rgba(245, 158, 11, 0.3)',
+      dotColor: '#f59e0b'
+    };
+  } else {
+    statusBadge = {
+      label: 'PREDICTED OPEN',
+      color: '#10b981',
+      bg: 'rgba(16, 185, 129, 0.12)',
+      border: 'rgba(16, 185, 129, 0.3)',
+      dotColor: '#10b981'
+    };
+  }
+
+  // 10. Confidence & Duration formatting
+  const confidenceLabel = isTimingUnavailable
+    ? 'Data Unavailable'
+    : (crossing.predictionConfidence === 'HIGH' || crossing.hasLiveSpeedMeasurement 
+      ? 'Verified Live' 
+      : crossing.predictionConfidence === 'MODERATE' 
+      ? 'Schedule Estimate' 
+      : 'Timing Unavailable');
+
+  const lastUpdateIso = crossing.calculationTimestamp || crossing.providerObservationTimestamp || crossing.lastProviderSyncTimestamp;
+  const lastUpdateText = lastUpdateIso ? format12h(lastUpdateIso) : null;
+
+  let closureDurationText = 'Duration unmeasured';
+  if (closureDurationMin > 0) {
+    closureDurationText = isClosedNow 
+      ? `Closed for ~${closureDurationMin} min` 
+      : `~${closureDurationMin} min`;
+  }
+
+  // 11. Train passing or active in corridor across all states
+  const embeddedCand = (crossing as any).upcomingTrain || 
+                        (crossing as any).primaryTrain || 
+                        (crossing as any).corridorTrain || 
+                        (crossing as any).activeCorridorTrain || 
+                        crossing.upcomingTrains?.[0] || 
+                        null;
+  const sectorCand = trainList && trainList.find(t => 
+    t.corridorId === crossing.corridorId && 
+    t.status !== 'CANCELLED' && 
+    t.status !== 'TERMINATED' && 
+    t.status !== 'OUT_OF_SECTOR'
+  );
+  const activeCand = embeddedCand || sectorCand || null;
+  
+  let passingTrain: CrossingTimingDetails['passingTrain'] = null;
+  if (activeCand && (activeCand.number || activeCand.trainNumber || activeCand.name || activeCand.trainName)) {
+    passingTrain = {
+      trainNumber: String(activeCand.number || activeCand.trainNumber || activeCand.id || ''),
+      trainName: String(activeCand.name || activeCand.trainName || 'Express / Passenger'),
+      speedText: formatTrainSpeed(activeCand),
+      direction: activeCand.direction || crossing.trainDirection || undefined,
+      route: (activeCand.origin && activeCand.destination) ? `${activeCand.origin} → ${activeCand.destination}` : (crossing.line || 'Amritsar Corridor'),
+      status: activeCand.status,
+      dataState: activeCand.dataState
+    };
+  }
+
+  // 12. Verified last train passed metadata
+  const lastPassedRaw = (crossing as any).lastTrainPassed || null;
+  let lastTrainPassed: CrossingTimingDetails['lastTrainPassed'] = null;
+  let lastTrainPassedText: string | null = null;
+
+  if (lastPassedRaw && (lastPassedRaw.trainNumber || lastPassedRaw.trainName)) {
+    lastTrainPassed = {
+      trainNumber: lastPassedRaw.trainNumber ? String(lastPassedRaw.trainNumber) : undefined,
+      trainName: lastPassedRaw.trainName ? String(lastPassedRaw.trainName) : undefined,
+      direction: lastPassedRaw.direction,
+      distanceKm: typeof lastPassedRaw.distanceKm === 'number' ? lastPassedRaw.distanceKm : undefined,
+      passedAt: lastPassedRaw.passedAt || lastPassedRaw.timestamp,
+      timestamp: lastPassedRaw.timestamp || lastPassedRaw.passedAt,
+      speedKmH: lastPassedRaw.speedKmH
+    };
+
+    const numName = lastTrainPassed.trainNumber
+      ? `#${lastTrainPassed.trainNumber} ${lastTrainPassed.trainName || ''}`.trim()
+      : (lastTrainPassed.trainName || 'Train');
+
+    let timeDetail = '';
+    const passTimeIso = lastTrainPassed.passedAt || lastTrainPassed.timestamp;
+    if (passTimeIso) {
+      const passEpoch = new Date(passTimeIso).getTime();
+      if (!isNaN(passEpoch)) {
+        const diffMin = Math.round((nowMs - passEpoch) / 60000);
+        if (diffMin >= 0 && diffMin <= 180) {
+          timeDetail = diffMin <= 1 ? 'just now' : `~${diffMin}m ago`;
+        } else {
+          const tStr = format12h(passEpoch);
+          if (tStr) timeDetail = `at ${tStr}`;
+        }
+      }
+    } else if (typeof lastTrainPassed.distanceKm === 'number' && lastTrainPassed.distanceKm > 0) {
+      timeDetail = `~${lastTrainPassed.distanceKm.toFixed(1)}km past`;
+    }
+
+    lastTrainPassedText = timeDetail ? `Last train: ${numName} (${timeDetail})` : `Last train: ${numName}`;
+  }
+
+  // 13. Comprehensive activeTrain calculation for all crossing states (Approaching, Stationary, Receding, Monitored)
+  let activeTrain: CrossingTimingDetails['activeTrain'] = null;
+  if (upcomingTrain) {
+    activeTrain = {
+      trainNumber: String(upcomingTrain.number || upcomingTrain.trainNumber || upcomingTrain.id || ''),
+      trainName: String(upcomingTrain.name || upcomingTrain.trainName || 'Express / Passenger'),
+      speedText: formatTrainSpeed(upcomingTrain),
+      direction: upcomingTrain.direction || crossing.trainDirection || undefined,
+      route: (upcomingTrain.origin && upcomingTrain.destination) ? `${upcomingTrain.origin} → ${upcomingTrain.destination}` : (crossing.line || 'Amritsar Corridor'),
+      status: isClosedNow ? 'TRAVERSING / TRACK OCCUPIED' : (isClosingSoon ? 'APPROACHING' : 'IN_TRANSIT'),
+      dataState: upcomingTrain.dataState,
+      distanceKm: typeof crossing.distanceAlongTrackKm === 'number' ? crossing.distanceAlongTrackKm : (upcomingTrain.distanceKm || null),
+      timingText: trainArrivalEtaText,
+      isApproaching: true,
+      locationText: typeof crossing.distanceAlongTrackKm === 'number' ? `~${crossing.distanceAlongTrackKm.toFixed(1)} km away` : 'On Approach Track'
+    };
+  } else if (activeCand && (activeCand.number || activeCand.trainNumber || activeCand.name || activeCand.trainName)) {
+    const isStationary = Boolean(
+      activeCand.isStationaryAtPlatform || 
+      activeCand.isStationary || 
+      activeCand.status === 'PLATFORM_BOARDING' || 
+      activeCand.status === 'HALTED' ||
+      activeCand.speedKmH === 0
+    );
+    const stationLabel = activeCand.currentStationName || (isStationary ? 'Amritsar Junction (ASR)' : '');
+    const distNum = typeof activeCand.distanceKm === 'number' ? activeCand.distanceKm : (typeof activeCand.distanceFromAmritsarKm === 'number' ? activeCand.distanceFromAmritsarKm : null);
+    
+    let timingLabel = '';
+    if (isStationary) {
+      timingLabel = stationLabel ? `Stationary at ${stationLabel} · Departure Awaited` : 'Stationary at Platform · Dispatch Signal Held';
+    } else if (activeCand.isReceding || activeCand.status === 'CLEARED_CROSSING') {
+      timingLabel = distNum ? `Cleared crossing · Receding (~${distNum.toFixed(1)} km past)` : 'Cleared crossing · Receding';
+    } else if (distNum && distNum > 8.0) {
+      timingLabel = `Outside Approach Zone (~${distNum.toFixed(1)} km away) · Corridor Monitored`;
+    } else {
+      timingLabel = activeCand.delayMinutes ? `In Transit · Delay: ${activeCand.delayMinutes}m` : 'In Transit on Corridor';
+    }
+
+    activeTrain = {
+      trainNumber: String(activeCand.number || activeCand.trainNumber || activeCand.id || ''),
+      trainName: String(activeCand.name || activeCand.trainName || 'Express / Passenger'),
+      speedText: formatTrainSpeed(activeCand),
+      direction: activeCand.direction || crossing.trainDirection || undefined,
+      route: (activeCand.origin && activeCand.destination) ? `${activeCand.origin} → ${activeCand.destination}` : (crossing.line || 'Amritsar Corridor'),
+      status: isStationary ? 'PLATFORM_BOARDING' : (activeCand.status || 'CORRIDOR_MONITORED'),
+      dataState: activeCand.dataState,
+      distanceKm: distNum,
+      timingText: timingLabel,
+      isStationary,
+      isApproaching: false,
+      isReceding: Boolean(activeCand.isReceding || activeCand.status === 'CLEARED_CROSSING'),
+      isScheduled: activeCand.dataState === 'SCHEDULED',
+      locationText: stationLabel ? `${stationLabel} Platform` : (distNum ? `~${distNum.toFixed(1)} km` : 'In Sector')
+    };
+  } else if (lastTrainPassed) {
+    activeTrain = {
+      trainNumber: lastTrainPassed.trainNumber || '',
+      trainName: lastTrainPassed.trainName || 'Recent Train',
+      speedText: lastTrainPassed.speedKmH ? `${lastTrainPassed.speedKmH} km/h` : 'Cleared',
+      direction: lastTrainPassed.direction,
+      status: 'CLEARED_CROSSING',
+      timingText: lastTrainPassedText || 'Cleared crossing',
+      isReceding: true,
+      distanceKm: lastTrainPassed.distanceKm || null,
+      locationText: lastTrainPassed.distanceKm ? `~${lastTrainPassed.distanceKm.toFixed(1)} km past` : 'Cleared crossing'
+    };
+  }
+
+  return {
+    statusBadge,
+    isClosedNow,
+    isClosingSoon,
+    isOpenPassage,
+    isTimingUnavailable,
+    hasApproachingTrain: Boolean(upcomingTrain || isClosingSoon || isClosedNow),
+    trainName: upcomingTrain?.name || upcomingTrain?.trainName,
+    trainNumber: upcomingTrain?.number || upcomingTrain?.trainNumber,
+    trainArrivalEtaText,
+    trainArrivalTimeStr,
+    trainArrivalSec,
+    trainSpeedText: formatTrainSpeed(upcomingTrain),
+    trainDistanceKm: typeof crossing.distanceAlongTrackKm === 'number' ? crossing.distanceAlongTrackKm : (upcomingTrain?.distanceKm || null),
+    closingTimeStr,
+    closingCountdownText,
+    closeSec,
+    reopeningTimeStr,
+    reopenCountdownText,
+    reopenSec,
+    closureDurationText,
+    closureDurationMin,
+    isMultiTrain,
+    trainCount,
+    confidenceLabel,
+    lastUpdateText,
+    activeTrain,
+    passingTrain,
+    lastTrainPassed,
+    lastTrainPassedText
+  };
+}
+
 

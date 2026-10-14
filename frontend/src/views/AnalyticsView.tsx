@@ -30,7 +30,7 @@ export const AnalyticsView: React.FC = () => {
   }, []);
 
   return (
-    <div className="page-container" style={{ paddingBottom: '90px' }}>
+    <div className="page-container">
       {/* PAGE HEADER */}
       <div className="page-header">
         <h1 className="page-title">Forecast Analytics &amp; Integrity Audit</h1>

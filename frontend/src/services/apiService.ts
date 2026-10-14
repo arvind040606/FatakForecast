@@ -10,7 +10,9 @@ import {
   PlannedJourney,
   TravelMode,
   PlaceSearchResult,
-  ProviderTelemetry
+  ProviderTelemetry,
+  ConnectionLifecycleState,
+  ConnectionStateDetails
 } from '../types';
 import {
   INITIAL_CROSSINGS,
@@ -25,15 +27,67 @@ class RailwayAPIService {
   private reconnectTimer: any = null;
   private pollingTimer: any = null;
   private listeners: Set<(payload: TelemetryPayload) => void> = new Set();
-  private audioEnabled: boolean = false;
+  private audioEnabled: boolean = true;
   private audioContext: AudioContext | null = null;
   private isOnline: boolean = true;
   private lastGoodPayload: TelemetryPayload | null = null;
-
+  private lastProcessedTimestamp: number = 0;
+  private inFlightPollAbort: AbortController | null = null;
 
   constructor() {
     if (typeof window !== 'undefined') {
       this.isOnline = navigator.onLine;
+
+      // Restore sound alerts preference (enabled by default on first launch)
+      try {
+        const savedAudio = localStorage.getItem('fatak_audio_enabled');
+        if (savedAudio !== null) {
+          this.audioEnabled = savedAudio === 'true';
+        } else {
+          this.audioEnabled = true;
+          localStorage.setItem('fatak_audio_enabled', 'true');
+        }
+      } catch (e) {
+        this.audioEnabled = true;
+      }
+
+      // Restore cached telemetry for immediate offline/cold start display
+      try {
+        const cachedStr = localStorage.getItem('fatak_cached_telemetry');
+        if (cachedStr) {
+          const cached = JSON.parse(cachedStr) as TelemetryPayload;
+          const cacheAgeMs = cached.timestamp ? (Date.now() - new Date(cached.timestamp).getTime()) : Infinity;
+          if (!isNaN(cacheAgeMs) && cacheAgeMs > 15 * 60 * 1000) {
+            // Expired cache: sanitize all crossings so expired closures are never replayed
+            cached.crossings = cached.crossings.map(c => ({
+              ...c,
+              status: 'UNKNOWN' as const,
+              gateStatusClassification: 'UNAVAILABLE' as const,
+              gateStatusLabel: 'STATUS UNAVAILABLE',
+              isStatusEstimated: true,
+              predictionAvailable: false,
+              estimatedGateClosingTime: null,
+              predictedReopenTime: null,
+              expectedTrainArrival: null,
+              remainingWaitSec: 0,
+              timeToNextClosureSec: 0,
+              statusReason: 'Cached telemetry expired (>15m) · Real-time gate state unverified'
+            }));
+            cached.trains = [];
+            cached.metrics = {
+              ...cached.metrics,
+              feedStatus: 'DISCONNECTED',
+              feedLatencyMs: null,
+              openCount: 0,
+              closedCount: 0,
+              approachingCount: 0,
+              unknownCount: cached.crossings.length
+            };
+          }
+          this.lastGoodPayload = cached;
+        }
+      } catch (e) {}
+
       window.addEventListener('online', () => {
         this.isOnline = true;
         this.initWebSocket();
@@ -42,6 +96,21 @@ class RailwayAPIService {
         this.isOnline = false;
         if (this.ws) {
           try { this.ws.close(); } catch (e) {}
+        }
+        this.onPollFailure();
+      });
+      window.addEventListener('fatak:backend-connected', () => {
+        console.log('[apiService] Backend connected/updated, reconnecting WebSocket');
+        this.initWebSocket();
+      });
+      window.addEventListener('fatak:reconnect-ws', () => {
+        this.initWebSocket();
+      });
+
+      // Visibility change recovery: resume and verify socket stream when user returns to app tab
+      document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) {
+          this.handleVisibilityRecovery();
         }
       });
     }
@@ -58,6 +127,12 @@ class RailwayAPIService {
 
   public setAudioEnabled(enabled: boolean) {
     this.audioEnabled = enabled;
+    try {
+      localStorage.setItem('fatak_audio_enabled', enabled ? 'true' : 'false');
+    } catch (e) {}
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('fatak:audio-preference-changed', { detail: { enabled } }));
+    }
     if (enabled) {
       if (!this.audioContext) {
         try {
@@ -126,12 +201,34 @@ class RailwayAPIService {
   }
 
   private wsRetryCount: number = 0;
+  private wsHeartbeatTimer: any = null;
+  private lastMessageReceivedMs: number = Date.now();
+  private connectionListeners: Set<(details: ConnectionStateDetails) => void> = new Set();
+  private isAttemptingConnection: boolean = false;
+
+  public handleVisibilityRecovery() {
+    const nowMs = Date.now();
+    const isStalled = !this.lastMessageReceivedMs || (nowMs - this.lastMessageReceivedMs > 20000);
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN || isStalled) {
+      console.log('[FatakForecast] App tab resumed active: verifying/recovering telemetry connection...');
+      if (this.reconnectTimer) {
+        clearTimeout(this.reconnectTimer);
+        this.reconnectTimer = null;
+      }
+      this.initWebSocket();
+    } else {
+      try {
+        this.ws.send(JSON.stringify({ type: 'PING' }));
+      } catch (e) {}
+    }
+  }
 
   public initWebSocket() {
     if (this.ws) {
       try { this.ws.close(); } catch (e) {}
       this.ws = null;
     }
+    this.stopHeartbeat();
 
     const baseUrl = this.getBaseUrl();
     let wsUrl: string;
@@ -153,58 +250,199 @@ class RailwayAPIService {
     }
 
     try {
+      this.isAttemptingConnection = true;
+      this.updateConnectionState(false, true);
       this.ws = new WebSocket(wsUrl);
 
       this.ws.onopen = () => {
         console.log('[FatakForecast] WebSocket telemetry stream connected');
         this.wsRetryCount = 0;
-        if (this.pollingTimer) {
-          clearInterval(this.pollingTimer);
-          this.pollingTimer = null;
-        }
+        this.isAttemptingConnection = false;
+        this.lastMessageReceivedMs = Date.now();
+        this.stopPolling();
+        this.startHeartbeat();
+        this.updateConnectionState(true, false);
       };
 
       this.ws.onmessage = (event) => {
+        this.lastMessageReceivedMs = Date.now();
         try {
-          const payload = JSON.parse(event.data) as TelemetryPayload;
+          const raw = JSON.parse(event.data);
+          if (raw.type === 'PONG' || raw.type === 'HEARTBEAT') {
+            this.updateConnectionState(true, false);
+            return;
+          }
+          const payload = raw as TelemetryPayload;
+          // Retain corridors from initial snapshot if delta omitted them
+          if (!payload.activeCorridors && this.lastGoodPayload?.activeCorridors) {
+            payload.activeCorridors = this.lastGoodPayload.activeCorridors;
+          }
           this.notifyListeners(payload);
+          this.updateConnectionState(true, false);
         } catch (err) {
           console.error('[FatakForecast] Error parsing WS telemetry payload', err);
         }
       };
 
       this.ws.onerror = () => {
-        this.startFallbackPolling();
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+          this.startFallbackPolling();
+        }
       };
 
       this.ws.onclose = () => {
+        this.stopHeartbeat();
         this.startFallbackPolling();
         this.scheduleReconnect();
       };
     } catch (err) {
+      this.stopHeartbeat();
       this.startFallbackPolling();
       this.scheduleReconnect();
     }
   }
 
+  private startHeartbeat() {
+    this.stopHeartbeat();
+    this.wsHeartbeatTimer = setInterval(() => {
+      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+        try {
+          this.ws.send(JSON.stringify({ type: 'PING' }));
+        } catch (e) {}
+
+        // Check if connection has stalled (>25s without any incoming message or heartbeat)
+        if (Date.now() - this.lastMessageReceivedMs > 25000) {
+          console.warn('[FatakForecast] WebSocket stalled (>25s without packet). Reconnecting...');
+          try { this.ws.close(); } catch (e) {}
+        }
+      }
+    }, 12000);
+  }
+
+  private stopHeartbeat() {
+    if (this.wsHeartbeatTimer) {
+      clearInterval(this.wsHeartbeatTimer);
+      this.wsHeartbeatTimer = null;
+    }
+  }
+
   private scheduleReconnect() {
     if (this.reconnectTimer) return;
+    this.stopHeartbeat();
     this.wsRetryCount++;
-    if (this.wsRetryCount > 3) {
-      // Gracefully stop retrying WS after 3 attempts and stick to clean polling fallback
-      return;
-    }
+    this.updateConnectionState(false, false);
+
+    // Continuous exponential backoff with jitter: 1.5s, 2.5s, 4s, 6s, 8s, up to 12s max
+    const delay = Math.min(1500 * Math.pow(1.4, Math.min(this.wsRetryCount, 6)), 12000) + Math.random() * 500;
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
+      if (typeof navigator !== 'undefined' && !navigator.onLine) {
+        this.scheduleReconnect();
+        return;
+      }
       this.initWebSocket();
-    }, 4000);
+    }, delay);
+  }
+
+  public getConnectionDetails(): ConnectionStateDetails {
+    const wsConnected = Boolean(this.ws && this.ws.readyState === WebSocket.OPEN);
+    const pollConnected = Boolean(this.consecutivePollErrors === 0 && this.lastGoodPayload);
+    const backendConnected = wsConnected || pollConnected;
+
+    const lastSync = this.lastGoodPayload?.metrics?.lastSuccessfulSync || null;
+    let railwayFeedStatus: 'LIVE' | 'STALE' | 'OFFLINE' = 'OFFLINE';
+
+    if (backendConnected) {
+      if (this.lastGoodPayload?.metrics?.railwayFeedFreshness) {
+        railwayFeedStatus = this.lastGoodPayload.metrics.railwayFeedFreshness;
+      } else if (lastSync) {
+        const ageMin = (Date.now() - new Date(lastSync).getTime()) / (60 * 1000);
+        if (ageMin < 15) railwayFeedStatus = 'LIVE';
+        else if (ageMin < 60) railwayFeedStatus = 'STALE';
+        else railwayFeedStatus = 'OFFLINE';
+      } else {
+        railwayFeedStatus = this.lastGoodPayload?.metrics?.feedStatus === 'CONNECTED' ? 'LIVE' : 'OFFLINE';
+      }
+    }
+
+    let state: ConnectionLifecycleState;
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      state = 'OFFLINE';
+    } else if (!backendConnected) {
+      state = (this.isAttemptingConnection || this.wsRetryCount <= 2) ? 'CONNECTING' : 'OFFLINE';
+    } else {
+      if (railwayFeedStatus === 'LIVE') {
+        state = 'LIVE';
+      } else if (railwayFeedStatus === 'STALE') {
+        state = 'STALE';
+      } else {
+        state = 'STALE'; // Connected to backend but railway telemetry offline/unreachable
+      }
+    }
+
+    return {
+      state,
+      backendConnected,
+      railwayFeedStatus,
+      latencyMs: this.lastGoodPayload?.metrics?.feedLatencyMs ?? null,
+      lastSyncIso: lastSync
+    };
+  }
+
+  public onConnectionStateChange(callback: (details: ConnectionStateDetails) => void): () => void {
+    this.connectionListeners.add(callback);
+    callback(this.getConnectionDetails());
+    return () => {
+      this.connectionListeners.delete(callback);
+    };
+  }
+
+  private lastDispatchedDetailsSignature: string = '';
+
+  private updateConnectionState(backendConnected: boolean, isConnecting: boolean = false) {
+    if (backendConnected) this.isAttemptingConnection = false;
+    const details = this.getConnectionDetails();
+    if (isConnecting && !backendConnected) {
+      details.state = 'CONNECTING';
+    }
+
+    // Quantize latency to 100ms buckets so micro-variations (e.g. 2ms vs 5ms) don't re-render
+    const quantizedLatency = details.latencyMs != null ? Math.round(details.latencyMs / 100) * 100 : null;
+    const signature = `${details.state}_${details.backendConnected}_${details.railwayFeedStatus}_${quantizedLatency}`;
+
+    if (this.lastDispatchedDetailsSignature === signature) {
+      return; // Skip duplicate notification to prevent UI flickering
+    }
+    this.lastDispatchedDetailsSignature = signature;
+
+    this.connectionListeners.forEach(cb => {
+      try { cb(details); } catch (e) {}
+    });
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('fatak:connection-state-changed', { detail: details }));
+    }
   }
 
   private consecutivePollErrors: number = 0;
   private currentPollIntervalMs: number = 2500;
   private isPollFetching: boolean = false;
 
+  private stopPolling() {
+    if (this.pollingTimer) {
+      clearTimeout(this.pollingTimer);
+      this.pollingTimer = null;
+    }
+    if (this.inFlightPollAbort) {
+      try { this.inFlightPollAbort.abort(); } catch (e) {}
+      this.inFlightPollAbort = null;
+    }
+    this.isPollFetching = false;
+  }
+
   private startFallbackPolling() {
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      return; // WebSocket is already active
+    }
     if (this.pollingTimer) return;
     this.scheduleNextPoll(100);
 
@@ -212,12 +450,11 @@ class RailwayAPIService {
     if (typeof document !== 'undefined') {
       const handleVisibilityChange = () => {
         if (document.hidden) {
-          if (this.pollingTimer) {
-            clearTimeout(this.pollingTimer);
-            this.pollingTimer = null;
-          }
+          this.stopPolling();
         } else {
-          this.scheduleNextPoll(500);
+          if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+            this.scheduleNextPoll(500);
+          }
         }
       };
       document.addEventListener('visibilitychange', handleVisibilityChange);
@@ -225,8 +462,13 @@ class RailwayAPIService {
   }
 
   private scheduleNextPoll(delayMs?: number) {
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.stopPolling();
+      return;
+    }
     if (this.pollingTimer) {
       clearTimeout(this.pollingTimer);
+      this.pollingTimer = null;
     }
     const interval = delayMs !== undefined ? delayMs : this.currentPollIntervalMs;
     this.pollingTimer = setTimeout(() => {
@@ -236,13 +478,21 @@ class RailwayAPIService {
   }
 
   private async executePollStep() {
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.stopPolling();
+      return;
+    }
     if (this.isPollFetching) return;
     this.isPollFetching = true;
 
     try {
       const baseUrl = this.getBaseUrl();
-      // High-Speed Primary: Single-roundtrip live telemetry endpoint
-      const liveRes = await fetch(`${baseUrl}/api/telemetry/live`, { signal: AbortSignal.timeout(6000) });
+      // High-Speed Primary: Single-roundtrip live telemetry endpoint with 7s network budget
+      const fetchSignal = AbortSignal.timeout(7000);
+      const liveRes = await fetch(`${baseUrl}/api/telemetry/live`, { 
+        signal: fetchSignal,
+        headers: { 'Cache-Control': 'no-cache', 'Pragma': 'no-cache' }
+      });
       if (liveRes.ok) {
         const liveData = await liveRes.json();
         if (liveData.crossings && liveData.crossings.length > 0) {
@@ -250,10 +500,10 @@ class RailwayAPIService {
           const payload: TelemetryPayload = {
             type: 'TELEMETRY_UPDATE',
             timestamp: liveData.timestamp || new Date().toISOString(),
-            metrics: liveData.metrics || INITIAL_METRICS,
+            metrics: liveData.metrics || this.lastGoodPayload?.metrics || INITIAL_METRICS,
             crossings: liveData.crossings,
-            trains: Array.isArray(liveData.trains) ? liveData.trains : [],
-            activeCorridors: liveData.activeCorridors || liveData.corridors || INITIAL_CORRIDORS
+            trains: Array.isArray(liveData.trains) ? liveData.trains : (this.lastGoodPayload?.trains || []),
+            activeCorridors: liveData.activeCorridors || liveData.corridors || this.lastGoodPayload?.activeCorridors || INITIAL_CORRIDORS
           };
           this.notifyListeners(payload);
           return;
@@ -261,64 +511,156 @@ class RailwayAPIService {
       }
 
       // Secondary fallback: parallel requests
+      const fallbackSignal = AbortSignal.timeout(7000);
       const [res, trainsRes] = await Promise.all([
-        fetch(`${baseUrl}/api/crossings`, { signal: AbortSignal.timeout(6000) }),
-        fetch(`${baseUrl}/api/trains`, { signal: AbortSignal.timeout(6000) }).catch(() => null)
+        fetch(`${baseUrl}/api/crossings`, { signal: fallbackSignal }),
+        fetch(`${baseUrl}/api/trains`, { signal: fallbackSignal }).catch(() => null)
       ]);
       if (res.ok) {
-        this.onPollSuccess();
         const data = await res.json();
         const trainsData = trainsRes && trainsRes.ok ? await trainsRes.json() : { trains: [] };
 
-        const payload: TelemetryPayload = {
-          type: 'TELEMETRY_UPDATE',
-          timestamp: new Date().toISOString(),
-          metrics: data.metrics || this.lastGoodPayload?.metrics || INITIAL_METRICS,
-          crossings: data.crossings || this.lastGoodPayload?.crossings || INITIAL_CROSSINGS,
-          trains: Array.isArray(trainsData.trains) ? trainsData.trains : (this.lastGoodPayload?.trains || []),
-          activeCorridors: data.corridors || this.lastGoodPayload?.activeCorridors || INITIAL_CORRIDORS
-        };
-        this.notifyListeners(payload);
-        return;
+        if (data.crossings && data.crossings.length > 0) {
+          this.onPollSuccess();
+          const payload: TelemetryPayload = {
+            type: 'TELEMETRY_UPDATE',
+            timestamp: data.timestamp || new Date().toISOString(),
+            metrics: data.metrics || this.lastGoodPayload?.metrics || INITIAL_METRICS,
+            crossings: data.crossings,
+            trains: Array.isArray(trainsData.trains) ? trainsData.trains : (this.lastGoodPayload?.trains || []),
+            activeCorridors: data.corridors || this.lastGoodPayload?.activeCorridors || INITIAL_CORRIDORS
+          };
+          this.notifyListeners(payload);
+          return;
+        }
       }
 
       this.onPollFailure();
-    } catch (e) {
+    } catch (e: any) {
       this.onPollFailure();
     } finally {
       this.isPollFetching = false;
-      this.scheduleNextPoll();
+      this.inFlightPollAbort = null;
+      if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+        this.scheduleNextPoll();
+      }
     }
   }
 
   private onPollSuccess() {
     this.consecutivePollErrors = 0;
-    this.currentPollIntervalMs = 2500;
+    this.currentPollIntervalMs = 3500;
   }
 
   private onPollFailure() {
     this.consecutivePollErrors++;
-    if (!this.lastGoodPayload) {
+    
+    // Only transition to disconnected state if multiple consecutive polls fail (3+ strikes) or network is truly offline
+    const isActuallyOffline = (typeof navigator !== 'undefined' && !navigator.onLine) || this.consecutivePollErrors >= 3;
+
+    if (this.lastGoodPayload) {
+      if (isActuallyOffline) {
+        const offlinePayload: TelemetryPayload = {
+          ...this.lastGoodPayload,
+          metrics: {
+            ...this.lastGoodPayload.metrics,
+            feedStatus: 'DISCONNECTED',
+            feedLatencyMs: null
+          }
+        };
+        this.listeners.forEach((callback) => callback(offlinePayload));
+      } else {
+        // Transient network latency jitter: retain existing live data without flickering disconnected
+        const degradedPayload: TelemetryPayload = {
+          ...this.lastGoodPayload,
+          metrics: {
+            ...this.lastGoodPayload.metrics,
+            feedLatencyMs: null
+          }
+        };
+        this.listeners.forEach((callback) => callback(degradedPayload));
+      }
+    } else {
       this.emitLocalSimulation();
     }
-    // Exponential backoff to avoid console spam when backend is waking up or offline
+
     if (this.consecutivePollErrors >= 3) {
-      this.currentPollIntervalMs = 15000;
+      this.currentPollIntervalMs = 10000;
     } else {
-      this.currentPollIntervalMs = 5000;
+      this.currentPollIntervalMs = 4000;
     }
   }
 
   private emitLocalSimulation() {
+    // 1. Attempt restore from persisted local cache
+    if (typeof window !== 'undefined') {
+      try {
+        const cachedStr = localStorage.getItem('fatak_cached_telemetry');
+        if (cachedStr) {
+          const cached = JSON.parse(cachedStr) as TelemetryPayload;
+          const cacheAgeMs = cached.timestamp ? (Date.now() - new Date(cached.timestamp).getTime()) : Infinity;
+          const isCacheStale = isNaN(cacheAgeMs) || cacheAgeMs > 15 * 60 * 1000;
+
+          // If cache is stale (>15m), all closure predictions have expired, so mark all crossings as UNAVAILABLE
+          const sanitizedCrossings = cached.crossings.map(c => {
+            if (isCacheStale) {
+              return {
+                ...c,
+                status: 'UNKNOWN' as const,
+                gateStatusClassification: 'UNAVAILABLE' as const,
+                gateStatusLabel: 'STATUS UNAVAILABLE',
+                isStatusEstimated: true,
+                predictionAvailable: false,
+                estimatedGateClosingTime: null,
+                predictedReopenTime: null,
+                expectedTrainArrival: null,
+                remainingWaitSec: 0,
+                timeToNextClosureSec: 0,
+                statusReason: 'Cached telemetry expired (>15m) · Real-time gate state unverified'
+              };
+            }
+            return c;
+          });
+
+          const offlinePayload: TelemetryPayload = {
+            ...cached,
+            crossings: sanitizedCrossings,
+            trains: isCacheStale ? [] : cached.trains,
+            metrics: {
+              ...cached.metrics,
+              feedStatus: 'DISCONNECTED',
+              feedLatencyMs: null,
+              openCount: isCacheStale ? 0 : cached.metrics.openCount,
+              closedCount: isCacheStale ? 0 : cached.metrics.closedCount,
+              approachingCount: isCacheStale ? 0 : cached.metrics.approachingCount,
+              unknownCount: isCacheStale ? sanitizedCrossings.length : cached.metrics.unknownCount
+            }
+          };
+          this.lastGoodPayload = offlinePayload;
+          this.listeners.forEach((callback) => callback(offlinePayload));
+          return;
+        }
+      } catch (e) {}
+    }
+
+    // 2. Offline fallback: indicate clearly that live telemetry is disconnected and statuses are estimated
     const payload: TelemetryPayload = {
       type: 'TELEMETRY_UPDATE',
       timestamp: new Date().toISOString(),
-      metrics: INITIAL_METRICS,
-      crossings: INITIAL_CROSSINGS,
+      metrics: {
+        ...INITIAL_METRICS,
+        feedStatus: 'DISCONNECTED'
+      },
+      crossings: INITIAL_CROSSINGS.map(c => ({
+        ...c,
+        gateStatusClassification: 'UNAVAILABLE',
+        isStatusEstimated: true,
+        forecastStatus: 'UNAVAILABLE'
+      })),
       trains: [],
       activeCorridors: INITIAL_CORRIDORS
     };
-    this.notifyListeners(payload);
+    this.listeners.forEach((callback) => callback(payload));
   }
 
   public subscribe(callback: (payload: TelemetryPayload) => void): () => void {
@@ -329,9 +671,53 @@ class RailwayAPIService {
   }
 
   private notifyListeners(payload: TelemetryPayload) {
-    if (payload.crossings && payload.crossings.length > 0) {
-      this.lastGoodPayload = payload;
+    if (!payload.activeCorridors && this.lastGoodPayload?.activeCorridors) {
+      payload.activeCorridors = this.lastGoodPayload.activeCorridors;
     }
+
+    // 1. Monotonic packet delivery guard: reject out-of-order stale packets delivered late
+    const packetTime = payload.timestamp ? new Date(payload.timestamp).getTime() : Date.now();
+    if (this.lastProcessedTimestamp > 0 && packetTime < this.lastProcessedTimestamp) {
+      return; // Ignore older snapshot
+    }
+    this.lastProcessedTimestamp = packetTime;
+
+    // 2. Authoritative snapshot consistency: recalculate and verify mutually exclusive metrics
+    if (Array.isArray(payload.crossings) && payload.crossings.length > 0) {
+      let openCount = 0;
+      let closedCount = 0;
+      let approachingCount = 0;
+      let unknownCount = 0;
+
+      for (const c of payload.crossings) {
+        if (c.status === 'CLOSED' || c.status === 'CLOSURE_EXPECTED' || c.status === 'CLOSURE_REPORTED') {
+          closedCount++;
+        } else if (c.status === 'APPROACHING') {
+          approachingCount++;
+        } else if (c.status === 'OPEN') {
+          openCount++;
+        } else {
+          unknownCount++;
+        }
+      }
+
+      if (payload.metrics) {
+        payload.metrics.totalCrossings = payload.crossings.length;
+        payload.metrics.openCount = openCount;
+        payload.metrics.closedCount = closedCount;
+        payload.metrics.approachingCount = approachingCount;
+        payload.metrics.unknownCount = unknownCount;
+      }
+
+      this.lastGoodPayload = payload;
+      // Persist latest verified live telemetry to local storage for graceful offline resumption
+      if (typeof window !== 'undefined') {
+        try {
+          localStorage.setItem('fatak_cached_telemetry', JSON.stringify(payload));
+        } catch (e) {}
+      }
+    }
+
     this.listeners.forEach((callback) => callback(payload));
   }
 
@@ -344,7 +730,10 @@ class RailwayAPIService {
     return {
       crossings: INITIAL_CROSSINGS,
       corridors: INITIAL_CORRIDORS,
-      metrics: INITIAL_METRICS
+      metrics: {
+        ...INITIAL_METRICS,
+        feedStatus: 'DISCONNECTED'
+      }
     };
   }
 
@@ -363,14 +752,15 @@ class RailwayAPIService {
       const res = await fetch(url, { signal: AbortSignal.timeout(6000) });
       if (res.ok) {
         const data = await res.json();
-        if (Array.isArray(data.results)) {
+        if (Array.isArray(data.results) && data.results.length > 0) {
           return data.results;
         }
       }
     } catch (e) {
       console.warn('Place search API error', e);
     }
-    return [];
+    // High quality offline fallback across Amritsar points of interest & saved places
+    return nativeService.searchLocalLandmarks(query, limit);
   }
 
   public async reverseGeocode(lat: number, lng: number): Promise<PlaceSearchResult | null> {
@@ -386,7 +776,8 @@ class RailwayAPIService {
     } catch (e) {
       console.warn('Reverse geocode API error', e);
     }
-    return null;
+    // Proximity resolver fallback
+    return nativeService.reverseGeocode(lat, lng);
   }
 
   public async getTrains(): Promise<SectorTrain[]> {
@@ -505,7 +896,7 @@ class RailwayAPIService {
           departureOffsetSec,
           travelMode
         }),
-        signal: AbortSignal.timeout(12000)
+        signal: AbortSignal.timeout(15000)
       });
 
       if (res.ok) {

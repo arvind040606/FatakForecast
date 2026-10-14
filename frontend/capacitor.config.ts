@@ -11,13 +11,12 @@ const config: CapacitorConfig = {
   },
   plugins: {
     StatusBar: {
-      style: 'DARK',
-      backgroundColor: '#070b14'
+      style: 'LIGHT',
+      backgroundColor: '#0c1222'
     },
     LocalNotifications: {
       smallIcon: 'ic_stat_train',
-      iconColor: '#38bdf8',
-      sound: 'beep.wav'
+      iconColor: '#38bdf8'
     }
   }
 };

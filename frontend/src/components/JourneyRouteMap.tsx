@@ -39,6 +39,7 @@ export const JourneyRouteMap: React.FC<JourneyRouteMapProps> = ({
   const destMarkerRef = useRef<L.Marker | null>(null);
   const onMapClickRef = useRef(onMapClick);
   const isNavigatingRef = useRef(isNavigating);
+  const lastFittedBoundsKeyRef = useRef<string>('');
   const [tileError, setTileError] = useState(false);
   const [activeTileSet, setActiveTileSet] = useState<'voyager' | 'streets'>('voyager');
 
@@ -203,9 +204,18 @@ export const JourneyRouteMap: React.FC<JourneyRouteMapProps> = ({
 
       activeLine.on('click', () => onSelectRoute(selectedRoute));
 
-      fitRouteBounds();
+      const oLat = userLocation ? userLocation[0].toFixed(3) : 'null';
+      const oLng = userLocation ? userLocation[1].toFixed(3) : 'null';
+      const dLat = destination ? destination[0].toFixed(3) : 'null';
+      const dLng = destination ? destination[1].toFixed(3) : 'null';
+      const boundsKey = `${oLat},${oLng}_${dLat},${dLng}_${selectedRoute.id}`;
+
+      if (boundsKey !== lastFittedBoundsKeyRef.current && !isNavigating) {
+        lastFittedBoundsKeyRef.current = boundsKey;
+        fitRouteBounds();
+      }
     }
-  }, [routes, selectedRoute?.id]);
+  }, [routes, selectedRoute?.id, userLocation, destination, isNavigating]);
 
   // Render Origin & Destination Markers
   useEffect(() => {
