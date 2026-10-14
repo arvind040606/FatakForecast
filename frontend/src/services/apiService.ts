@@ -30,7 +30,14 @@ class RailwayAPIService {
   private audioEnabled: boolean = true;
   private audioContext: AudioContext | null = null;
   private isOnline: boolean = true;
-  private lastGoodPayload: TelemetryPayload | null = null;
+  private lastGoodPayload: TelemetryPayload = {
+    type: 'TELEMETRY_UPDATE',
+    timestamp: new Date().toISOString(),
+    metrics: INITIAL_METRICS,
+    crossings: INITIAL_CROSSINGS,
+    trains: INITIAL_TRAINS,
+    activeCorridors: INITIAL_CORRIDORS
+  };
   private lastProcessedTimestamp: number = 0;
   private inFlightPollAbort: AbortController | null = null;
 
@@ -648,22 +655,17 @@ class RailwayAPIService {
       } catch (e) {}
     }
 
-    // 2. Offline fallback: indicate clearly that live telemetry is disconnected and statuses are estimated
+    // 2. Offline fallback: retain initial trains and state
     const payload: TelemetryPayload = {
       type: 'TELEMETRY_UPDATE',
       timestamp: new Date().toISOString(),
       metrics: {
-        ...INITIAL_METRICS,
+        ...(this.lastGoodPayload?.metrics || INITIAL_METRICS),
         feedStatus: 'DISCONNECTED'
       },
-      crossings: INITIAL_CROSSINGS.map(c => ({
-        ...c,
-        gateStatusClassification: 'UNAVAILABLE',
-        isStatusEstimated: true,
-        forecastStatus: 'UNAVAILABLE'
-      })),
-      trains: [],
-      activeCorridors: INITIAL_CORRIDORS
+      crossings: this.lastGoodPayload?.crossings || INITIAL_CROSSINGS,
+      trains: this.lastGoodPayload?.trains?.length ? this.lastGoodPayload.trains : INITIAL_TRAINS,
+      activeCorridors: this.lastGoodPayload?.activeCorridors || INITIAL_CORRIDORS
     };
     this.listeners.forEach((callback) => callback(payload));
   }
@@ -731,15 +733,15 @@ class RailwayAPIService {
   public async getCrossings(): Promise<{ crossings: RailwayCrossing[]; corridors: RailwayCorridor[]; metrics: OperationalMetrics }> {
     try {
       const res = await fetch(`${this.getBaseUrl()}/api/crossings`);
-      if (res.ok) return await res.json();
+      if (res.ok) {
+        const data = await res.json();
+        if (data.crossings && data.crossings.length > 0) return data;
+      }
     } catch (e) {}
     return {
-      crossings: INITIAL_CROSSINGS,
-      corridors: INITIAL_CORRIDORS,
-      metrics: {
-        ...INITIAL_METRICS,
-        feedStatus: 'DISCONNECTED'
-      }
+      crossings: this.lastGoodPayload?.crossings || INITIAL_CROSSINGS,
+      corridors: this.lastGoodPayload?.activeCorridors || INITIAL_CORRIDORS,
+      metrics: this.lastGoodPayload?.metrics || INITIAL_METRICS
     };
   }
 
@@ -791,10 +793,12 @@ class RailwayAPIService {
       const res = await fetch(`${this.getBaseUrl()}/api/trains`);
       if (res.ok) {
         const data = await res.json();
-        return Array.isArray(data.trains) ? data.trains : [];
+        if (Array.isArray(data.trains) && data.trains.length > 0) {
+          return data.trains;
+        }
       }
     } catch (e) {}
-    return [];
+    return this.lastGoodPayload?.trains || INITIAL_TRAINS;
   }
 
   public async getTrainSchedule(trainNumber: string): Promise<any> {

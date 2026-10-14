@@ -167,7 +167,7 @@ export function App() {
     });
 
     railwayApi.getTrains().then(trainData => {
-      if (trainData?.length) setTrains(trainData);
+      if (Array.isArray(trainData) && trainData.length > 0) setTrains(trainData);
     });
 
     // Subscribe to live telemetry stream
@@ -198,7 +198,9 @@ export function App() {
         return anyChanged ? merged : prev;
       });
 
-      setTrains(payload.trains);
+      if (Array.isArray(payload.trains) && payload.trains.length > 0) {
+        setTrains(payload.trains);
+      }
       if (payload.activeCorridors?.length) {
         setCorridors(payload.activeCorridors);
       }

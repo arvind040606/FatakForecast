@@ -255,18 +255,19 @@ class NativeService {
     try {
       // 1. Backend URL
       const storedUrl = await this.storageGet('fatak_backend_url');
-      const isLegacyLocalIp = storedUrl && (
+      const isLegacyOrIncompatible = storedUrl && (
         storedUrl.includes('localhost') || 
         storedUrl.includes('127.0.0.1') || 
         storedUrl.includes('10.211.') || 
         storedUrl.includes('10.59.') || 
         storedUrl.includes('10.0.2.2') ||
-        storedUrl.includes('192.168.')
+        storedUrl.includes('192.168.') ||
+        storedUrl.includes('onrender.com')
       );
 
       if (this.isCapacitorNative) {
-        // Automatically migrate native mobile app away from any legacy host PC IPs to production cloud
-        if (!storedUrl || isLegacyLocalIp) {
+        // Automatically migrate native mobile app away from obsolete hosts to verified production cloud
+        if (!storedUrl || isLegacyOrIncompatible) {
           this.backendBaseUrl = PRODUCTION_BACKEND_URL;
           await this.storageSet('fatak_backend_url', this.backendBaseUrl);
         } else {
@@ -279,7 +280,7 @@ class NativeService {
           }
         }).catch(() => {});
       } else {
-        if (storedUrl && !isLegacyLocalIp) {
+        if (storedUrl && !isLegacyOrIncompatible) {
           this.backendBaseUrl = storedUrl;
         } else {
           this.backendBaseUrl = this.getDefaultBackendUrl();
@@ -608,17 +609,18 @@ class NativeService {
     const target = (url || this.getBackendUrl()).replace(/\/+$/, '');
     const startTime = Date.now();
     try {
-      let res: Response | null = null;
-      try {
-        res = await fetch(`${target}/api/ping`, { signal: AbortSignal.timeout(3500) });
-      } catch (e) {
-        res = await fetch(`${target}/api/health`, { signal: AbortSignal.timeout(3500) });
-      }
+      const res = await fetch(`${target}/api/telemetry/live`, { 
+        signal: AbortSignal.timeout(4500),
+        headers: { 'Cache-Control': 'no-cache' }
+      });
       const latencyMs = Date.now() - startTime;
       if (res && res.ok) {
-        return { success: true, latencyMs };
+        const data = await res.json().catch(() => null);
+        if (data && Array.isArray(data.crossings) && data.crossings.length >= 20) {
+          return { success: true, latencyMs };
+        }
       }
-      return { success: false, error: `HTTP ${res?.status}: ${res?.statusText}` };
+      return { success: false, error: `Incompatible backend or insufficient crossings` };
     } catch (err: any) {
       return { success: false, error: err.message || 'Connection timed out' };
     }
@@ -627,9 +629,6 @@ class NativeService {
   public async probeWorkingBackendUrl(): Promise<string | null> {
     const candidateList = [
       PRODUCTION_BACKEND_URL,
-      'https://fatakforecast.vercel.app',
-      'https://fatakforecast.onrender.com',
-      'https://fatakforecast-backend.onrender.com',
       this.backendBaseUrl,
       this.getDefaultBackendUrl()
     ];
