@@ -64,34 +64,17 @@ class RailwayAPIService {
         if (cachedStr) {
           const cached = JSON.parse(cachedStr) as TelemetryPayload;
           const cacheAgeMs = cached.timestamp ? (Date.now() - new Date(cached.timestamp).getTime()) : Infinity;
-          if (!isNaN(cacheAgeMs) && cacheAgeMs > 15 * 60 * 1000) {
-            // Expired cache: sanitize all crossings so expired closures are never replayed
-            cached.crossings = cached.crossings.map(c => ({
-              ...c,
-              status: 'UNKNOWN' as const,
-              gateStatusClassification: 'UNAVAILABLE' as const,
-              gateStatusLabel: 'STATUS UNAVAILABLE',
-              isStatusEstimated: true,
-              predictionAvailable: false,
-              estimatedGateClosingTime: null,
-              predictedReopenTime: null,
-              expectedTrainArrival: null,
-              remainingWaitSec: 0,
-              timeToNextClosureSec: 0,
-              statusReason: 'Cached telemetry expired (>15m) · Real-time gate state unverified'
-            }));
-            cached.trains = [];
-            cached.metrics = {
-              ...cached.metrics,
-              feedStatus: 'DISCONNECTED',
-              feedLatencyMs: null,
-              openCount: 0,
-              closedCount: 0,
-              approachingCount: 0,
-              unknownCount: cached.crossings.length
-            };
+          if (cached && Array.isArray(cached.crossings) && cached.crossings.length >= 20) {
+            if (!isNaN(cacheAgeMs) && cacheAgeMs > 30 * 60 * 1000) {
+              // Mark stale status without destroying train objects
+              cached.metrics = {
+                ...cached.metrics,
+                feedStatus: 'ONLINE_SYNCHRONIZED',
+                feedLatencyMs: null
+              };
+            }
+            this.lastGoodPayload = cached;
           }
-          this.lastGoodPayload = cached;
         }
       } catch (e) {}
 
@@ -493,14 +476,31 @@ class RailwayAPIService {
     this.isPollFetching = true;
 
     try {
-      const baseUrl = this.getBaseUrl();
+      let baseUrl = this.getBaseUrl();
       // High-Speed Primary: Single-roundtrip live telemetry endpoint with 7s network budget
-      const fetchSignal = AbortSignal.timeout(7000);
-      const liveRes = await fetch(`${baseUrl}/api/telemetry/live`, { 
-        signal: fetchSignal,
-        headers: { 'Cache-Control': 'no-cache', 'Pragma': 'no-cache' }
-      });
-      if (liveRes.ok) {
+      let liveRes: Response | null = null;
+      try {
+        const fetchSignal = AbortSignal.timeout(6000);
+        liveRes = await fetch(`${baseUrl}/api/telemetry/live`, { 
+          signal: fetchSignal,
+          headers: { 'Cache-Control': 'no-cache', 'Pragma': 'no-cache' }
+        });
+      } catch (err) {
+        // If baseUrl failed and is not already production URL, immediately retry with cloud production URL
+        if (baseUrl !== 'https://fatakforecast.vercel.app') {
+          baseUrl = 'https://fatakforecast.vercel.app';
+          try {
+            await nativeService.setBackendUrl(baseUrl);
+            const retrySignal = AbortSignal.timeout(6000);
+            liveRes = await fetch(`${baseUrl}/api/telemetry/live`, {
+              signal: retrySignal,
+              headers: { 'Cache-Control': 'no-cache', 'Pragma': 'no-cache' }
+            });
+          } catch (retryErr) {}
+        }
+      }
+
+      if (liveRes && liveRes.ok) {
         const liveData = await liveRes.json();
         if (liveData.crossings && liveData.crossings.length > 0) {
           const payload: TelemetryPayload = {

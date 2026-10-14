@@ -5,6 +5,7 @@
 // Real Geocoding (OSM Nominatim) and Persistent Database-backed Saved Places
 // =========================================================================
 
+import { Capacitor } from '@capacitor/core';
 import { Geolocation, Position } from '@capacitor/geolocation';
 import { LocalNotifications, ScheduleOptions } from '@capacitor/local-notifications';
 import { Haptics, ImpactStyle, NotificationType } from '@capacitor/haptics';
@@ -108,8 +109,13 @@ class NativeService {
   private themePreference: ThemeMode = 'dark';
 
   constructor() {
-    this.isCapacitorNative = typeof (window as any)?.Capacitor !== 'undefined' && 
-                             (window as any)?.Capacitor?.isNativePlatform?.() === true;
+    this.isCapacitorNative = Capacitor.isNativePlatform() || 
+                             (typeof (window as any)?.Capacitor !== 'undefined' && (window as any)?.Capacitor?.isNativePlatform?.() === true) ||
+                             (typeof window !== 'undefined' && (
+                               window.location.protocol === 'capacitor:' ||
+                               (window.location.hostname === 'localhost' && (!window.location.port || window.location.port === '')) ||
+                               /Android|iPhone|iPad|Mobile/i.test(navigator.userAgent)
+                             ));
 
     // Default to the verified production cloud backend URL for standalone phone operation
     this.backendBaseUrl = PRODUCTION_BACKEND_URL;
@@ -265,27 +271,30 @@ class NativeService {
         storedUrl.includes('onrender.com')
       );
 
-      if (this.isCapacitorNative) {
-        // Automatically migrate native mobile app away from obsolete hosts to verified production cloud
-        if (!storedUrl || isLegacyOrIncompatible) {
-          this.backendBaseUrl = PRODUCTION_BACKEND_URL;
-          await this.storageSet('fatak_backend_url', this.backendBaseUrl);
-        } else {
-          this.backendBaseUrl = storedUrl;
-        }
-        // Probe connection asynchronously to confirm live connectivity
-        this.probeWorkingBackendUrl().then(working => {
-          if (working) {
-            window.dispatchEvent(new CustomEvent('fatak:backend-connected', { detail: working }));
+      const isMobileEnv = this.isNative() || Capacitor.isNativePlatform();
+
+      if (isMobileEnv || !storedUrl || isLegacyOrIncompatible) {
+        this.backendBaseUrl = PRODUCTION_BACKEND_URL;
+        await this.storageSet('fatak_backend_url', this.backendBaseUrl);
+        try {
+          if (typeof localStorage !== 'undefined') {
+            const raw = localStorage.getItem('fatak_backend_url');
+            if (!raw || raw !== PRODUCTION_BACKEND_URL) {
+              localStorage.setItem('fatak_backend_url', PRODUCTION_BACKEND_URL);
+            }
           }
-        }).catch(() => {});
+        } catch (e) {}
       } else {
-        if (storedUrl && !isLegacyOrIncompatible) {
-          this.backendBaseUrl = storedUrl;
-        } else {
-          this.backendBaseUrl = this.getDefaultBackendUrl();
-        }
+        this.backendBaseUrl = storedUrl;
       }
+
+      // Probe connection asynchronously to confirm live connectivity
+      this.probeWorkingBackendUrl().then(working => {
+        if (working && working !== this.backendBaseUrl) {
+          this.backendBaseUrl = working;
+          window.dispatchEvent(new CustomEvent('fatak:backend-connected', { detail: working }));
+        }
+      }).catch(() => {});
 
       // 2. Fetch Saved Places from Server Database
       await this.refreshSavedPlacesFromServer();
@@ -558,18 +567,19 @@ class NativeService {
       if (viteEnvUrl) return String(viteEnvUrl).replace(/\/+$/, '');
 
       // In Capacitor native mobile app or on mobile devices, use cloud production URL
-      const isMobileDevice = this.isCapacitorNative || 
-                             /Android|iPhone|iPad|Mobile/i.test(navigator.userAgent) ||
+      const isMobileDevice = this.isNative() || 
+                             Capacitor.isNativePlatform() ||
                              window.location.protocol === 'capacitor:' ||
-                             (window.location.hostname === 'localhost' && /Android/i.test(navigator.userAgent));
+                             (window.location.hostname === 'localhost' && (!window.location.port || window.location.port === '')) ||
+                             /Android|iPhone|iPad|Mobile/i.test(navigator.userAgent);
 
       if (isMobileDevice) {
         return PRODUCTION_BACKEND_URL;
       }
 
       const hostname = window.location.hostname;
-      // Local development on PC loopback
-      if (hostname === 'localhost' || hostname === '127.0.0.1') {
+      // Local development on PC loopback ONLY if running on typical dev server ports
+      if ((hostname === 'localhost' || hostname === '127.0.0.1') && (window.location.port === '5173' || window.location.port === '3000')) {
         return 'http://localhost:8787';
       }
 
