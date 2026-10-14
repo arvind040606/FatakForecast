@@ -577,6 +577,11 @@ class NativeService {
         return window.location.origin;
       }
 
+      // If hosted on Render, route to same-origin APIs
+      if (window.location.hostname.includes('onrender.com')) {
+        return window.location.origin;
+      }
+
       // If hosted on general HTTPS
       if (window.location.protocol === 'https:') {
         return window.location.origin;
@@ -603,14 +608,17 @@ class NativeService {
     const target = (url || this.getBackendUrl()).replace(/\/+$/, '');
     const startTime = Date.now();
     try {
-      const res = await fetch(`${target}/api/ping`, {
-        signal: AbortSignal.timeout(3500)
-      });
+      let res: Response | null = null;
+      try {
+        res = await fetch(`${target}/api/ping`, { signal: AbortSignal.timeout(3500) });
+      } catch (e) {
+        res = await fetch(`${target}/api/health`, { signal: AbortSignal.timeout(3500) });
+      }
       const latencyMs = Date.now() - startTime;
-      if (res.ok) {
+      if (res && res.ok) {
         return { success: true, latencyMs };
       }
-      return { success: false, error: `HTTP ${res.status}: ${res.statusText}` };
+      return { success: false, error: `HTTP ${res?.status}: ${res?.statusText}` };
     } catch (err: any) {
       return { success: false, error: err.message || 'Connection timed out' };
     }
@@ -619,6 +627,9 @@ class NativeService {
   public async probeWorkingBackendUrl(): Promise<string | null> {
     const candidateList = [
       PRODUCTION_BACKEND_URL,
+      'https://fatakforecast.vercel.app',
+      'https://fatakforecast.onrender.com',
+      'https://fatakforecast-backend.onrender.com',
       this.backendBaseUrl,
       this.getDefaultBackendUrl()
     ];

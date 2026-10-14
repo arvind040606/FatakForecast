@@ -336,6 +336,25 @@ app.get('/health/live', (req, res) => {
   res.status(200).send('OK');
 });
 
+app.get('/health', (req, res) => {
+  res.status(200).json({ status: 'OK', uptime: process.uptime() });
+});
+
+app.get('/', (req, res) => {
+  res.status(200).json({
+    name: 'FatakForecast Amritsar Railway Intelligence Platform',
+    status: 'ONLINE',
+    version: '1.0.0',
+    endpoints: {
+      health: '/api/health',
+      liveTelemetry: '/api/telemetry/live',
+      crossings: '/api/crossings',
+      trains: '/api/trains',
+      ping: '/api/ping'
+    }
+  });
+});
+
 // AUTHENTIC SCHEDULED TIMETABLE BASELINE (PRESERVED AS INERT REFERENCE — NEVER INJECTED INTO LIVE RUNTIME)
 // Timetable entries are strictly reference data and never create live trains or predict crossing closures.
 const BASELINE_SCHEDULED_TRAINS = [];

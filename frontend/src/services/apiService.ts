@@ -368,16 +368,12 @@ class RailwayAPIService {
     let state: ConnectionLifecycleState;
     if (typeof navigator !== 'undefined' && !navigator.onLine) {
       state = 'OFFLINE';
-    } else if (!backendConnected) {
-      state = (this.isAttemptingConnection || this.wsRetryCount <= 2) ? 'CONNECTING' : 'OFFLINE';
+    } else if (backendConnected) {
+      state = railwayFeedStatus === 'LIVE' ? 'LIVE' : 'STALE';
+    } else if (this.isAttemptingConnection) {
+      state = 'CONNECTING';
     } else {
-      if (railwayFeedStatus === 'LIVE') {
-        state = 'LIVE';
-      } else if (railwayFeedStatus === 'STALE') {
-        state = 'STALE';
-      } else {
-        state = 'STALE'; // Connected to backend but railway telemetry offline/unreachable
-      }
+      state = 'OFFLINE';
     }
 
     return {
@@ -500,7 +496,6 @@ class RailwayAPIService {
       if (liveRes.ok) {
         const liveData = await liveRes.json();
         if (liveData.crossings && liveData.crossings.length > 0) {
-          this.onPollSuccess();
           const payload: TelemetryPayload = {
             type: 'TELEMETRY_UPDATE',
             timestamp: liveData.timestamp || new Date().toISOString(),
@@ -509,6 +504,8 @@ class RailwayAPIService {
             trains: Array.isArray(liveData.trains) ? liveData.trains : (this.lastGoodPayload?.trains || []),
             activeCorridors: liveData.activeCorridors || liveData.corridors || this.lastGoodPayload?.activeCorridors || INITIAL_CORRIDORS
           };
+          this.lastGoodPayload = payload;
+          this.onPollSuccess();
           this.notifyListeners(payload);
           return;
         }
@@ -525,7 +522,6 @@ class RailwayAPIService {
         const trainsData = trainsRes && trainsRes.ok ? await trainsRes.json() : { trains: [] };
 
         if (data.crossings && data.crossings.length > 0) {
-          this.onPollSuccess();
           const payload: TelemetryPayload = {
             type: 'TELEMETRY_UPDATE',
             timestamp: data.timestamp || new Date().toISOString(),
@@ -534,6 +530,8 @@ class RailwayAPIService {
             trains: Array.isArray(trainsData.trains) ? trainsData.trains : (this.lastGoodPayload?.trains || []),
             activeCorridors: data.corridors || this.lastGoodPayload?.activeCorridors || INITIAL_CORRIDORS
           };
+          this.lastGoodPayload = payload;
+          this.onPollSuccess();
           this.notifyListeners(payload);
           return;
         }
@@ -553,6 +551,7 @@ class RailwayAPIService {
 
   private onPollSuccess() {
     this.consecutivePollErrors = 0;
+    this.wsRetryCount = 0;
     this.currentPollIntervalMs = 3500;
     this.isAttemptingConnection = false;
     this.updateConnectionState(true, false);
