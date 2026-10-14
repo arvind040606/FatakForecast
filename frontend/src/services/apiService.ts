@@ -444,6 +444,10 @@ class RailwayAPIService {
       return; // WebSocket is already active
     }
     if (this.pollingTimer) return;
+    if (!this.lastGoodPayload) {
+      this.isAttemptingConnection = true;
+      this.updateConnectionState(false, true);
+    }
     this.scheduleNextPoll(100);
 
     // Credit conservation & energy management: pause polling when tab is hidden, resume on active
@@ -550,6 +554,8 @@ class RailwayAPIService {
   private onPollSuccess() {
     this.consecutivePollErrors = 0;
     this.currentPollIntervalMs = 3500;
+    this.isAttemptingConnection = false;
+    this.updateConnectionState(true, false);
   }
 
   private onPollFailure() {
@@ -718,6 +724,7 @@ class RailwayAPIService {
       }
     }
 
+    this.updateConnectionState(true, false);
     this.listeners.forEach((callback) => callback(payload));
   }
 
