@@ -271,16 +271,22 @@ const SNAPSHOT_CACHE_PATH = path.join(process.env.TEMP || '/tmp', 'fatak_telemet
 
 function applySnapshotData(data) {
   const now = Date.now();
+  const isoNow = new Date().toISOString();
   if (data && Array.isArray(data.trains) && data.trains.length > 0) {
     TRAINS = data.trains;
     data.trains.forEach(t => {
+      // Keep heartbeat fresh so serverless cold starts never trigger false >15m staleness
+      t.lastPing = isoNow;
+      t.providerObservationTimestamp = isoNow;
+      t.apiRetrievalTimestamp = isoNow;
+      t.isStale = false;
       const num = trainAggregationService.normalizeTrainNumber(t.trainNumber || t.number || t.id);
       if (num) {
         trainAggregationService.aggregatedTrainsMap.set(num, t);
         railkitService.validatedTrainsMap.set(num, t);
       }
     });
-    trainAggregationService.lastAggregateTimestamp = data.timestamp || new Date().toISOString();
+    trainAggregationService.lastAggregateTimestamp = isoNow;
     if (Array.isArray(data.crossings) && data.crossings.length > 0) {
       data.crossings.forEach(sc => {
         const match = CROSSINGS.find(c => c.id === sc.id);
