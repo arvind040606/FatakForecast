@@ -177,12 +177,12 @@ export function App() {
         if (!prev || prev.length !== payload.crossings.length) {
           return payload.crossings;
         }
+        const prevMap = new Map(prev.map(c => [c.id, c]));
         let anyChanged = false;
-        const merged = payload.crossings.map((nextC, idx) => {
-          const prevC = prev[idx];
+        const merged = payload.crossings.map(nextC => {
+          const prevC = prevMap.get(nextC.id);
           if (
             prevC &&
-            prevC.id === nextC.id &&
             prevC.status === nextC.status &&
             prevC.upcomingTrainId === nextC.upcomingTrainId &&
             prevC.estimatedGateClosingTime === nextC.estimatedGateClosingTime &&

@@ -689,6 +689,32 @@ class RailwayAPIService {
     }
     this.lastProcessedTimestamp = packetTime;
 
+    // Anti-flapping hysteresis guard:
+    // If previous verified telemetry (<90s ago) had in-sector trains and active closures,
+    // never accept a sudden drop to 0 trains or 0 closures from an uninitialized serverless instance.
+    const prevHadClosures = (this.lastGoodPayload?.metrics?.closedCount || 0) > 0;
+    const prevHadTrains = (this.lastGoodPayload?.trains?.length || 0) > 0;
+    const prevTime = this.lastGoodPayload?.timestamp ? new Date(this.lastGoodPayload.timestamp).getTime() : 0;
+    const isPreviousFresh = (Date.now() - prevTime) < 90000;
+
+    if (isPreviousFresh && prevHadTrains && (!payload.trains || payload.trains.length === 0)) {
+      payload.trains = this.lastGoodPayload.trains;
+    }
+
+    if (isPreviousFresh && prevHadClosures) {
+      const incomingClosed = (payload.crossings || []).filter(c => 
+        c.status === 'CLOSED' || c.status === 'CLOSURE_EXPECTED' || c.status === 'CLOSURE_REPORTED'
+      ).length;
+      if (incomingClosed === 0 && this.lastGoodPayload) {
+        payload.crossings = this.lastGoodPayload.crossings;
+        if (payload.metrics) {
+          payload.metrics.closedCount = this.lastGoodPayload.metrics.closedCount;
+          payload.metrics.closureExpectedCount = this.lastGoodPayload.metrics.closureExpectedCount;
+          payload.metrics.approachingCount = this.lastGoodPayload.metrics.approachingCount;
+        }
+      }
+    }
+
     // 2. Authoritative snapshot consistency: recalculate and verify mutually exclusive metrics
     if (Array.isArray(payload.crossings) && payload.crossings.length > 0) {
       let openCount = 0;

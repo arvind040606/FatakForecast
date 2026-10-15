@@ -171,17 +171,19 @@ export class TrainAggregationService {
         railkitService.validatedTrainsMap.forEach((_, key) => candidateKeys.add(this.normalizeTrainNumber(key)));
         railRadarService.validatedTrainsMap.forEach((_, key) => candidateKeys.add(this.normalizeTrainNumber(key)));
 
-        candidateKeys.forEach(normKey => {
-          const rkTrain = railkitService.validatedTrainsMap.get(normKey);
-          const rrTrain = railRadarService.validatedTrainsMap.get(normKey);
-          const chosen = this.arbitrateRecords(rkTrain, rrTrain);
-          if (chosen) {
-            updatedAggregateMap.set(normKey, chosen);
-          }
-        });
+        if (candidateKeys.size > 0) {
+          candidateKeys.forEach(normKey => {
+            const rkTrain = railkitService.validatedTrainsMap.get(normKey);
+            const rrTrain = railRadarService.validatedTrainsMap.get(normKey);
+            const chosen = this.arbitrateRecords(rkTrain, rrTrain);
+            if (chosen) {
+              updatedAggregateMap.set(normKey, chosen);
+            }
+          });
 
-        this.aggregatedTrainsMap = updatedAggregateMap;
-        this.lastAggregateTimestamp = new Date().toISOString();
+          this.aggregatedTrainsMap = updatedAggregateMap;
+          this.lastAggregateTimestamp = new Date().toISOString();
+        }
 
         if (this.onUpdateCallback) {
           try { this.onUpdateCallback(); } catch (e) {}

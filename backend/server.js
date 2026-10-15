@@ -269,40 +269,63 @@ function saveCrossingAnchors() {
 
 const SNAPSHOT_CACHE_PATH = path.join(process.env.TEMP || '/tmp', 'fatak_telemetry_snapshot.json');
 
+function applySnapshotData(data) {
+  const now = Date.now();
+  if (data && Array.isArray(data.trains) && data.trains.length > 0) {
+    TRAINS = data.trains;
+    data.trains.forEach(t => {
+      const num = trainAggregationService.normalizeTrainNumber(t.trainNumber || t.number || t.id);
+      if (num) {
+        trainAggregationService.aggregatedTrainsMap.set(num, t);
+        railkitService.validatedTrainsMap.set(num, t);
+      }
+    });
+    trainAggregationService.lastAggregateTimestamp = data.timestamp || new Date().toISOString();
+    if (Array.isArray(data.crossings) && data.crossings.length > 0) {
+      data.crossings.forEach(sc => {
+        const match = CROSSINGS.find(c => c.id === sc.id);
+        if (match) {
+          const rMs = sc.predictedReopenTime ? new Date(sc.predictedReopenTime).getTime() : 0;
+          if (rMs > now && (sc.status === 'CLOSED' || sc.status === 'CLOSURE_REPORTED' || sc.status === 'CLOSURE_EXPECTED')) {
+            match.status = sc.status;
+            match.timeToNextClosureSec = sc.timeToNextClosureSec;
+            match.upcomingTrainId = sc.upcomingTrainId;
+            match.upcomingTrain = sc.upcomingTrain;
+            match.estimatedGateClosingTime = sc.estimatedGateClosingTime;
+            match.predictedReopenTime = sc.predictedReopenTime;
+          } else {
+            match.predictedReopenTime = null;
+            match.estimatedGateReopeningTime = null;
+          }
+        }
+      });
+    }
+  }
+}
+
 function loadTelemetrySnapshot() {
   try {
-    if (fs.existsSync(SNAPSHOT_CACHE_PATH)) {
-      const data = JSON.parse(fs.readFileSync(SNAPSHOT_CACHE_PATH, 'utf8'));
-      const now = Date.now();
-      const ageMs = data?.timestamp ? (now - new Date(data.timestamp).getTime()) : Infinity;
-      // Do not load snapshots older than 15 minutes
-      if (!isNaN(ageMs) && ageMs > 15 * 60 * 1000) {
-        return;
+    let loaded = false;
+    const tryApply = (filePath) => {
+      if (fs.existsSync(filePath)) {
+        try {
+          const raw = fs.readFileSync(filePath, 'utf8');
+          const data = JSON.parse(raw);
+          if (data && Array.isArray(data.trains) && data.trains.length > 0) {
+            applySnapshotData(data);
+            return true;
+          }
+        } catch (e) {}
       }
-      if (data && Array.isArray(data.trains) && data.trains.length > 0) {
-        TRAINS = data.trains;
-        if (Array.isArray(data.crossings) && data.crossings.length > 0) {
-          data.crossings.forEach(sc => {
-            const match = CROSSINGS.find(c => c.id === sc.id);
-            if (match) {
-              const rMs = sc.predictedReopenTime ? new Date(sc.predictedReopenTime).getTime() : 0;
-              // If reopen time has expired, do not restore as closed; never restore reopening time for open crossings
-              if (rMs > now && (sc.status === 'CLOSED' || sc.status === 'CLOSURE_REPORTED' || sc.status === 'CLOSURE_EXPECTED')) {
-                match.status = sc.status;
-                match.timeToNextClosureSec = sc.timeToNextClosureSec;
-                match.upcomingTrainId = sc.upcomingTrainId;
-                match.upcomingTrain = sc.upcomingTrain;
-                match.estimatedGateClosingTime = sc.estimatedGateClosingTime;
-                match.predictedReopenTime = sc.predictedReopenTime;
-              } else {
-                match.predictedReopenTime = null;
-                match.estimatedGateReopeningTime = null;
-              }
-            }
-          });
-        }
-        trainAggregationService.lastAggregateTimestamp = data.timestamp || new Date().toISOString();
-      }
+      return false;
+    };
+
+    // 1. Try temp cache first
+    loaded = tryApply(SNAPSHOT_CACHE_PATH);
+    // 2. If absent or empty, always load bundled fallback snapshot
+    if (!loaded) {
+      const fallbackPath = path.join(__dirname, 'telemetry_fallback_snapshot.json');
+      tryApply(fallbackPath);
     }
   } catch (e) {}
 }
@@ -573,9 +596,13 @@ function updateKinematics() {
 
   // 1. Sync trains from authentic telemetry aggregation service (RailKit SDK)
   const activeTrains = trainAggregationService.getAggregatedTrainsList();
+  if (activeTrains.length > 0) {
+    TRAINS = activeTrains;
+  }
+  const trainsToProcess = TRAINS;
 
   // Advance only genuine, active in-transit trains along their permanent-way OSM corridor coordinates
-  activeTrains.forEach(train => {
+  trainsToProcess.forEach(train => {
     // Terminated, cancelled, not-started trains or trains without coordinates have null speed (unavailable)
     if (train.status === 'TERMINATED' || train.status === 'CANCELLED' || train.status === 'NOT_STARTED' || train.status === 'not-started' || train.lat === null || train.lng === null) {
       train.speedKmH = null;
@@ -745,7 +772,9 @@ function updateKinematics() {
     }
   }
 
-  TRAINS = activeTrains;
+  if (activeTrains.length > 0) {
+    TRAINS = activeTrains;
+  }
   TRAINS.forEach(train => {
     const tNum = String(train.trainNumber || train.id || '');
     if (!train.sectionalSpeedKmH || typeof train.sectionalSpeedKmH !== 'number') {

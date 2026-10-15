@@ -111,31 +111,33 @@ export const CrossingsView: React.FC<CrossingsViewProps> = ({
     if (sortBy === 'name') return a.name.localeCompare(b.name);
     if (sortBy === 'id') return a.id.localeCompare(b.id);
     
-    // Sort by closure urgency
-    const aClosed = a.status === 'CLOSURE_EXPECTED' || a.status === 'CLOSED' || a.status === 'CLOSURE_REPORTED';
-    const bClosed = b.status === 'CLOSURE_EXPECTED' || b.status === 'CLOSED' || b.status === 'CLOSURE_REPORTED';
-    if (aClosed && !bClosed) return -1;
-    if (!aClosed && bClosed) return 1;
+    // Sort by closure urgency with strictly deterministic tie-breakers
+    const getUrgencyScore = (c: RailwayCrossing): number => {
+      if (c.activeDrill || c.observedPhysicalGateState === 'CLOSED' || c.status === 'CLOSED' || c.status === 'CLOSURE_REPORTED') return 4;
+      if (c.status === 'CLOSURE_EXPECTED') return 3;
+      if (c.status === 'APPROACHING') return 2;
+      if (c.countdownAvailable && c.timeToNextClosureSec > 0 && c.timeToNextClosureSec <= 1800) return 1;
+      return 0;
+    };
 
-    const aApp = a.status === 'APPROACHING';
-    const bApp = b.status === 'APPROACHING';
-    if (aApp && !bApp) return -1;
-    if (!aApp && bApp) return 1;
-
-    const aHasCountdown = a.countdownAvailable && a.timeToNextClosureSec > 0;
-    const bHasCountdown = b.countdownAvailable && b.timeToNextClosureSec > 0;
-    if (aHasCountdown && !bHasCountdown) return -1;
-    if (!aHasCountdown && bHasCountdown) return 1;
-    if (aHasCountdown && bHasCountdown) {
-      return a.timeToNextClosureSec - b.timeToNextClosureSec;
+    const scoreA = getUrgencyScore(a);
+    const scoreB = getUrgencyScore(b);
+    if (scoreA !== scoreB) {
+      return scoreB - scoreA; // Higher urgency on top
     }
 
-    const aOpen = a.status === 'OPEN';
-    const bOpen = b.status === 'OPEN';
-    if (aOpen && !bOpen) return -1;
-    if (!aOpen && bOpen) return 1;
+    // Within same closure urgency tier, sort by ETA / countdown if available
+    if (scoreA >= 1) {
+      const etaA = a.timeToNextClosureSec > 0 ? a.timeToNextClosureSec : 99999;
+      const etaB = b.timeToNextClosureSec > 0 ? b.timeToNextClosureSec : 99999;
+      if (Math.abs(etaA - etaB) > 5) {
+        return etaA - etaB;
+      }
+    }
 
-    // Stable secondary tie-breaker by ID to prevent position jitter
+    // Fully deterministic stable tie-breaker by name and permanent OSM ID
+    const nameDiff = a.name.localeCompare(b.name);
+    if (nameDiff !== 0) return nameDiff;
     return a.id.localeCompare(b.id);
   });
 
