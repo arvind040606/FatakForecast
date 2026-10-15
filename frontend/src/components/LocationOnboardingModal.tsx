@@ -22,6 +22,7 @@ import {
   PlaceSearchResult 
 } from '../types';
 import { nativeService } from '../services/nativeService';
+import { railwayApi } from '../services/apiService';
 import { AMRITSAR_LANDMARKS } from '../data/landmarks';
 import { getCrossingsSortedByDistance, formatDistance } from '../utils/geoUtils';
 
@@ -109,7 +110,7 @@ export const LocationOnboardingModal: React.FC<LocationOnboardingModalProps> = (
       // Request permission only upon explicit user action
       const hasPermission = await nativeService.requestLocationPermission();
       if (!hasPermission) {
-        setDetectError('Location permission was denied. You can search manually or use approximate network location.');
+        setDetectError('Location access was not granted. You can select your area or search manually below.');
         setIpFallbackOffered(true);
         setIsDetecting(false);
         return;
@@ -135,11 +136,11 @@ export const LocationOnboardingModal: React.FC<LocationOnboardingModalProps> = (
         });
         nativeService.triggerHaptic('success');
       } else {
-        setDetectError('GPS timed out or position unavailable. You can use approximate network location or search manually.');
+        setDetectError('GPS position is temporarily unavailable. You can search your area or select from below.');
         setIpFallbackOffered(true);
       }
     } catch (err: any) {
-      setDetectError(err.message || 'Error acquiring device position.');
+      setDetectError('Unable to detect location. Please search or select your area below.');
       setIpFallbackOffered(true);
     } finally {
       setIsDetecting(false);
@@ -166,7 +167,7 @@ export const LocationOnboardingModal: React.FC<LocationOnboardingModalProps> = (
         setSelectedLocation({
           lat: 31.6340,
           lng: 74.8723,
-          name: 'Amritsar Central Corridor',
+          name: 'Amritsar City Centre',
           source: 'APPROXIMATE_IP',
           isApproximate: true
         });
@@ -175,7 +176,7 @@ export const LocationOnboardingModal: React.FC<LocationOnboardingModalProps> = (
       setSelectedLocation({
         lat: 31.6340,
         lng: 74.8723,
-        name: 'Amritsar Central Corridor',
+        name: 'Amritsar City Centre',
         source: 'APPROXIMATE_IP',
         isApproximate: true
       });
@@ -249,20 +250,39 @@ export const LocationOnboardingModal: React.FC<LocationOnboardingModalProps> = (
   const handleSaveAndConfirm = () => {
     if (!selectedLocation) return;
 
+    const cleanName = userName.trim() || 'Amritsar Commuter';
+    const isGps = selectedLocation.source === 'GPS_HARDWARE';
+
     const profile: UserLocationProfile = {
-      userName: userName.trim() || undefined,
+      userName: cleanName,
       lat: selectedLocation.lat,
       lng: selectedLocation.lng,
       locationName: selectedLocation.name,
       source: selectedLocation.source,
       isApproximate: selectedLocation.isApproximate,
       accuracyMeters: selectedLocation.accuracyMeters,
+      gpsConsent: isGps,
       updatedAt: new Date().toISOString()
     };
 
     onSaveProfile(profile);
     nativeService.setUserLocationProfile(profile);
     nativeService.triggerHaptic('success');
+
+    // Asynchronously onboard with Supabase backend and attach token
+    railwayApi.onboardUser(cleanName, isGps, selectedLocation.lat, selectedLocation.lng)
+      .then(res => {
+        if (res && res.user) {
+          profile.userId = res.user.id;
+          profile.supabaseToken = res.token;
+          nativeService.setUserLocationProfile(profile);
+          onSaveProfile(profile);
+        }
+      })
+      .catch(err => {
+        console.warn('[Onboarding] Supabase profile sync fallback:', err.message);
+      });
+
     onClose();
   };
 
@@ -374,7 +394,7 @@ export const LocationOnboardingModal: React.FC<LocationOnboardingModalProps> = (
               type="text"
               value={userName}
               onChange={(e) => setUserName(e.target.value)}
-              placeholder="e.g. Harpreet Singh, Arvind..."
+              placeholder="e.g. Prompt Pirates..."
               style={{
                 width: '100%',
                 padding: '9px 12px',

@@ -181,6 +181,18 @@ export class TrainAggregationService {
             }
           });
 
+          // Preserve active, non-stale previously verified trains as well as scheduled services so chunked batching never causes trains to pop in and out
+          this.aggregatedTrainsMap.forEach((prevTrain, prevKey) => {
+            if (!updatedAggregateMap.has(prevKey)) {
+              const obsTime = prevTrain.providerObservationTimestamp || prevTrain.lastPing;
+              const ageMs = obsTime ? (Date.now() - new Date(obsTime).getTime()) : Infinity;
+              const isScheduledOrNotStarted = prevTrain.status === 'NOT_STARTED' || prevTrain.status === 'not-started' || prevTrain.dataState === 'SCHEDULED';
+              if ((ageMs < 15 * 60 * 1000 || isScheduledOrNotStarted) && prevTrain.status !== 'TERMINATED' && prevTrain.status !== 'CANCELLED') {
+                updatedAggregateMap.set(prevKey, prevTrain);
+              }
+            }
+          });
+
           this.aggregatedTrainsMap = updatedAggregateMap;
           this.lastAggregateTimestamp = new Date().toISOString();
         }
@@ -211,7 +223,12 @@ export class TrainAggregationService {
    * Strictly verified telemetry — zero fabricated dummy/synthetic trains.
    */
   getAggregatedTrainsList() {
-    return Array.from(this.aggregatedTrainsMap.values());
+    return Array.from(this.aggregatedTrainsMap.values()).sort((a, b) => {
+      const inSecA = a.isWithinAmritsarSector ? 1 : 0;
+      const inSecB = b.isWithinAmritsarSector ? 1 : 0;
+      if (inSecA !== inSecB) return inSecB - inSecA;
+      return String(a.number || a.id || '').localeCompare(String(b.number || b.id || ''));
+    });
   }
 
   getDiagnostics() {

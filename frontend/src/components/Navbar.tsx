@@ -62,17 +62,17 @@ export const Navbar: React.FC<NavbarProps> = ({
           color: 'var(--status-open)',
           dot: 'var(--status-open)',
           pulse: true,
-          tooltip: `Live Indian Railways Telemetry (RailKit). Latency: ${connDetails.latencyMs ?? metrics.feedLatencyMs ?? 250}ms. Last synced ${secondsAgo}s ago.`
+          tooltip: 'Live railway feed active. Tracking trains in real time.'
         };
       case 'STALE':
         return {
-          label: 'STALE',
+          label: 'DELAYED',
           bg: 'var(--status-approaching-bg)',
           border: 'var(--status-approaching-border)',
           color: 'var(--warning-amber)',
           dot: 'var(--warning-amber)',
           pulse: false,
-          tooltip: `Backend connected. Live railway data last synced ${secondsAgo}s ago (>15m threshold). Gate predictions unconfirmed.`
+          tooltip: 'Live train updates are delayed. Reconnecting to railway feed...'
         };
       case 'CONNECTING':
         return {
@@ -82,7 +82,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           color: 'var(--accent-cyan)',
           dot: 'var(--accent-cyan)',
           pulse: true,
-          tooltip: 'Connecting to FatakForecast telemetry engine...'
+          tooltip: 'Connecting to live railway network...'
         };
       case 'OFFLINE':
       default:
@@ -93,7 +93,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           color: 'var(--critical-red)',
           dot: 'var(--critical-red)',
           pulse: false,
-          tooltip: 'Offline: Cannot connect to FatakForecast backend. Retrying with exponential backoff...'
+          tooltip: 'Offline: Railway feed temporarily unavailable. Retrying automatically...'
         };
     }
   };

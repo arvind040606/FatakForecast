@@ -9,7 +9,6 @@ import {
   Trash2, 
   Send, 
   Sliders, 
-  Info,
   ShieldAlert,
   Volume2,
   VolumeX,
@@ -300,22 +299,6 @@ export const NotificationsView: React.FC<NotificationsViewProps> = ({ onNavigate
         </div>
       </div>
 
-      {/* HONEST BACKGROUND MONITORING DISCLOSURE */}
-      <div style={{
-        backgroundColor: 'var(--status-approaching-bg)',
-        border: '1px solid var(--status-approaching-border)',
-        borderRadius: 'var(--radius-md)',
-        padding: '12px 14px',
-        marginBottom: '16px',
-        display: 'flex',
-        alignItems: 'flex-start',
-        gap: '10px'
-      }}>
-        <Info size={17} style={{ color: 'var(--warning-amber)', flexShrink: 0, marginTop: '2px' }} />
-        <div style={{ fontSize: '11.5px', color: 'var(--text-primary)', lineHeight: 1.45 }}>
-          <strong>Android Background Execution Reality:</strong> Scheduled departure alarms deliver reliably in the background via the Android AlarmManager and LocalNotifications plugin. Real-time crossing proximity and active route updates monitor conditions while the app is active or in recent use. Continuous background GPS polling when the app is killed is not run to protect your battery life.
-        </div>
-      </div>
 
       {/* INTERACTIVE NOTIFICATION TESTING SUITE */}
       <div className="card" style={{ padding: '16px', marginBottom: '16px' }}>
@@ -773,10 +756,10 @@ export const NotificationsView: React.FC<NotificationsViewProps> = ({ onNavigate
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0' }}>
             <div>
               <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>
-                Connection &amp; Telemetry Advisories
+                Connection &amp; Service Advisories
               </div>
               <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
-                Warn when live railway feeds are interrupted and predictions become estimated
+                Warn when live railway feeds are interrupted and updates become estimated
               </div>
             </div>
             <input 

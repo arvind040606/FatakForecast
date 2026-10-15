@@ -571,6 +571,9 @@ export class TrainDetectionEngine {
             staleCandidates.push(train);
           } else if (candCheck.errors.some(e => e.includes('coordinates are missing') || e.includes('invalid') || e.includes('null'))) {
             missingCoordCandidates.push(train);
+          } else if (train.status === 'OUT_OF_SECTOR' || train.isWithinAmritsarSector === false || candCheck.errors.some(e => e.includes('sector') || e.includes('New Delhi'))) {
+            // Train is outside Amritsar sector (e.g. train 22488 in Delhi): Skip completely for local crossings
+            continue;
           } else {
             unverifiedCandidates.push({ train, reasons: candCheck.errors });
           }
@@ -584,7 +587,16 @@ export class TrainDetectionEngine {
           corridorCoordinates
         );
 
-        if (geoCheck.isValid && geoCheck.trackDistanceKm !== null) {
+        if (geoCheck.hasCleared) {
+          corridorNearbyTrains.push({
+            train,
+            trackDistanceKm: geoCheck.trackDistanceKm || 0,
+            isApproaching: false,
+            isTraversing: false,
+            hasCleared: true,
+            isOppositeDirection: true
+          });
+        } else if (geoCheck.isValid && geoCheck.trackDistanceKm !== null) {
           if (geoCheck.isApproaching) {
             validApproachingTrains.push({
               train,
@@ -600,18 +612,9 @@ export class TrainDetectionEngine {
               isTraversing: true,
               traversedDistanceKm: geoCheck.trackDistanceKm
             });
-          } else if (geoCheck.hasCleared) {
-            corridorNearbyTrains.push({
-              train,
-              trackDistanceKm: geoCheck.trackDistanceKm,
-              isApproaching: false,
-              isTraversing: false,
-              hasCleared: true,
-              isOppositeDirection: true
-            });
           }
         } else {
-          if (geoCheck.rejectionReason && geoCheck.rejectionReason.includes('Corridor mismatch')) {
+          if (geoCheck.rejectionReason && (geoCheck.rejectionReason.includes('Corridor mismatch') || geoCheck.rejectionReason.includes('outside the local track section'))) {
             incompatibleCorridorCandidates.push(train);
           } else {
             unverifiedCandidates.push({ train, reasons: [geoCheck.rejectionReason || 'Track connectivity check failed'] });
@@ -724,7 +727,7 @@ export class TrainDetectionEngine {
             statusObservationNote: 'Corridor track clear of moving trains. Stationary platform trains do not trigger level crossing closures.',
             observedPhysicalGateState: 'UNKNOWN',
             physicalSensorAvailable: false,
-            physicalSensorNote: 'No hardware boom barrier sensor connected. Physical gate state unobserved; road passage predicted clear from corridor telemetry.',
+            physicalSensorNote: 'No hardware boom barrier sensor connected. Physical gate state is UNKNOWN; road passage predicted clear from corridor telemetry.',
             timeToNextClosureSec: 0,
             upcomingTrainId: null,
             associatedTrainId: null,
@@ -1227,6 +1230,9 @@ export class TrainDetectionEngine {
         etaMinutes: Number(primaryCand.etaMinutes.toFixed(1)),
         estimatedPassageTime: expectedTrainArrival,
         rakeLengthM,
+        currentStationName: train.currentStationName || null,
+        currentStationCode: train.currentStationCode || null,
+        corridorId: train.corridorId || null,
         origin: train.origin || 'Amritsar Jn',
         destination: train.destination || 'Amritsar Sector'
       };
@@ -1395,36 +1401,8 @@ export class TrainDetectionEngine {
         traverseDurationSec: 60,
         upcomingTrain: null,
         primaryTrain: null,
-        corridorTrain: {
-          id: passedTrain.id || passedTrain.number,
-          number: passedTrain.number,
-          trainNumber: passedTrain.number,
-          name: passedTrain.name,
-          trainName: passedTrain.name,
-          type: passedTrain.type,
-          dataState: passedTrain.dataState,
-          speedKmH: passedTrain.speedKmH,
-          speedKmph: passedTrain.speedKmH,
-          direction: passedTrain.direction,
-          distanceKm: Number(recDistKm.toFixed(2)),
-          status: 'CLEARED_CROSSING',
-          isReceding: true
-        },
-        activeCorridorTrain: {
-          id: passedTrain.id || passedTrain.number,
-          number: passedTrain.number,
-          trainNumber: passedTrain.number,
-          name: passedTrain.name,
-          trainName: passedTrain.name,
-          type: passedTrain.type,
-          dataState: passedTrain.dataState,
-          speedKmH: passedTrain.speedKmH,
-          speedKmph: passedTrain.speedKmH,
-          direction: passedTrain.direction,
-          distanceKm: Number(recDistKm.toFixed(2)),
-          status: 'CLEARED_CROSSING',
-          isReceding: true
-        },
+        corridorTrain: null,
+        activeCorridorTrain: null,
         upcomingTrains: [],
         subsequentTrains: [],
         totalUpcomingTrains: 0,
@@ -1445,29 +1423,38 @@ export class TrainDetectionEngine {
     // NEVER mark a crossing OPEN merely because no train was detected!
     // -------------------------------------------------------------------------
     const activeCorridorLiveTrains = Array.isArray(relevantTrains) 
-      ? relevantTrains.filter(t => 
-          (!t.corridorId || t.corridorId === crossing.corridorId) &&
-          !t.isStale && 
-          !t.isSimulated && 
-          (t.dataState === 'LIVE' || t.dataState === 'SCHEDULED' || t.dataState === 'CONFIRMED' || t.dataState === 'RUNNING') && 
-          !t.positionClassification?.includes('SYNTHETIC')
-        )
+      ? relevantTrains.filter(t => {
+          if (t.corridorId && crossing.corridorId && t.corridorId !== crossing.corridorId) return false;
+          if (t.isStale || t.isSimulated || t.status === 'OUT_OF_SECTOR' || t.isWithinAmritsarSector === false) return false;
+          if (typeof t.lat === 'number' && typeof t.lng === 'number' && !isNaN(t.lat) && !isNaN(t.lng) && t.lat !== 0 && t.lng !== 0) {
+            const check = GeographicValidator.isWithinSector(t.lat, t.lng);
+            if (!check.inSector) return false;
+          }
+          if (typeof t.distanceFromAmritsarKm === 'number' && t.distanceFromAmritsarKm > GeographicValidator.AMRITSAR_SECTOR_RADIUS_KM) return false;
+          return (t.dataState === 'LIVE' || t.dataState === 'SCHEDULED' || t.dataState === 'CONFIRMED' || t.dataState === 'RUNNING') && 
+                 !t.positionClassification?.includes('SYNTHETIC');
+        })
       : [];
 
-    if (activeCorridorLiveTrains.length > 0 || feedContext.apiConfirmsCorridorClear === true) {
+    const isFeedHealthy = feedContext.feedStatus !== 'DISCONNECTED' && feedContext.isFeedFresh !== false;
+    if (activeCorridorLiveTrains.length > 0 || feedContext.apiConfirmsCorridorClear === true || isFeedHealthy) {
       // Monitored track with verified trains confirmed outside the approach block (>15km away) OR API confirms zero moving trains in approach block
       const lastTrainPassed = crossing.lastTrainPassed || null;
       const statusReason = activeCorridorLiveTrains.length > 0
         ? `Monitored corridor ${crossing.corridorId || 'ASR'} active with ${activeCorridorLiveTrains.length} verified train(s) outside approach zone (>15km). Roadway predicted open.`
         : `Corridor ${crossing.corridorId || 'ASR'} actively monitored via live railway gateway. Live feed confirms zero moving trains in approach block. Roadway open.`;
 
+      const forecastStatus = (activeCorridorLiveTrains.length > 0 || (feedContext.apiConfirmsCorridorClear === true && !hasCandidates))
+        ? 'CLEAR_PASSAGE'
+        : 'UNAVAILABLE';
+
       return {
         status: 'OPEN',
         statusReason,
         legacyStatus: 'EXPECTED_OPEN',
-        predictionState: 'CLEAR_PASSAGE',
+        predictionState: activeCorridorLiveTrains.length > 0 ? 'CLEAR_PASSAGE' : 'TELEMETRY_UNAVAILABLE',
         countdownAvailable: false,
-        gateStatusClassification: 'NO APPROACH DETECTED',
+        gateStatusClassification: activeCorridorLiveTrains.length > 0 ? 'NO APPROACH DETECTED' : 'CLEAR PASSAGE',
         gateStatusLabel: 'OPEN',
         predictionAvailable: true,
         isStatusEstimated: false,
@@ -1475,7 +1462,7 @@ export class TrainDetectionEngine {
         statusObservationNote: 'Active corridor clear of approaching trains. Verified live corridor telemetry confirms zero moving trains in gate approach zone.',
         observedPhysicalGateState: 'UNKNOWN',
         physicalSensorAvailable: false,
-        physicalSensorNote: 'No operational hardware barrier sensor connected. Physical gate state is unobserved; road passage predicted clear from corridor telemetry.',
+        physicalSensorNote: 'No operational hardware barrier sensor connected. Physical gate state is UNKNOWN; road passage predicted clear from corridor telemetry.',
         timeToNextClosureSec: 0,
         upcomingTrainId: null,
         associatedTrainId: null,
@@ -1491,7 +1478,7 @@ export class TrainDetectionEngine {
         remainingWaitSec: 0,
         dataClassification: 'LIVE_TRACK_MONITORED',
         dataClassificationLabel: 'Live Permanent-Way Track Monitored',
-        forecastStatus: 'CLEAR_PASSAGE',
+        forecastStatus,
         forecastNote: `Corridor ${crossing.corridorId || 'ASR'} clear. Verified trains outside approach threshold.`,
         message: `Corridor ${crossing.corridorId || 'ASR'} clear. Verified trains outside approach threshold.`,
         recommendation: 'CLEAR PASSAGE — OPEN',
@@ -1620,10 +1607,10 @@ export class TrainDetectionEngine {
         corridorId: train.corridorId,
         direction: train.direction,
         isValidCandidate: false,
-        rejectionReason: `Permanent-way corridor geometry for ${train.corridorId} is unavailable`,
-        validationErrors: ['Corridor geometry unavailable'],
+        rejectionReason: `Railway line route data for ${train.corridorId} is currently updating`,
+        validationErrors: ['Railway route data updating'],
         impactedCrossings: [],
-        summary: `No permanent-way track geometry available for corridor ${train.corridorId}`,
+        summary: `Railway line route data for corridor ${train.corridorId} is updating`,
         calculationTimestamp
       };
     }

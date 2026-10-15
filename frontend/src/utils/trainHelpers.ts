@@ -419,15 +419,15 @@ export function getCrossingTimingDetails(
   let trainArrivalEtaText = '';
   if (isTimingUnavailable) {
     trainArrivalEtaText = isPredictionExpired
-      ? 'Prediction expired · Telemetry feed offline'
-      : (crossing.statusReason || 'Telemetry feed offline · Gate timing unverified');
+      ? 'Waiting for latest train update · Live feed reconnecting'
+      : (crossing.statusReason || 'Live train update temporarily unavailable · Please check tracks before crossing');
   } else if (isClosedNow) {
     if (reopeningTimeStr) {
       trainArrivalEtaText = reopenCountdownText 
         ? `Expected to reopen at ${reopeningTimeStr} (${reopenCountdownText})`
         : `Expected to reopen at ${reopeningTimeStr}`;
     } else if (isReopenInPast) {
-      trainArrivalEtaText = 'Reopening overdue · Verifying track clearance';
+      trainArrivalEtaText = 'Reopening shortly · Checking tracks';
     } else {
       trainArrivalEtaText = 'Barriers locked · Reopening shortly';
     }
@@ -519,32 +519,37 @@ export function getCrossingTimingDetails(
       : `~${closureDurationMin} min`;
   }
 
-  // 11. Train passing or active in corridor across all states
-  const embeddedCand = (crossing as any).upcomingTrain || 
-                        (crossing as any).primaryTrain || 
-                        (crossing as any).corridorTrain || 
-                        (crossing as any).activeCorridorTrain || 
-                        crossing.upcomingTrains?.[0] || 
-                        null;
-  const sectorCand = trainList && trainList.find(t => 
-    t.corridorId === crossing.corridorId && 
-    t.status !== 'CANCELLED' && 
-    t.status !== 'TERMINATED' && 
-    t.status !== 'OUT_OF_SECTOR'
-  );
-  const activeCand = embeddedCand || sectorCand || null;
+  // 11. Train passing or active in corridor: strictly verified candidates only
+  const corridorMatchFromList = (!((crossing as any).upcomingTrain || (crossing as any).primaryTrain || (crossing as any).corridorTrain || (crossing as any).activeCorridorTrain) && Array.isArray(trainList)) 
+    ? trainList.find(t => t.corridorId === crossing.corridorId && t.status !== 'TERMINATED' && t.status !== 'CANCELLED' && t.status !== 'OUT_OF_SECTOR')
+    : null;
+
+  const activeCand = (crossing as any).upcomingTrain || 
+                     (crossing as any).primaryTrain || 
+                     (crossing as any).corridorTrain || 
+                     (crossing as any).activeCorridorTrain || 
+                     crossing.upcomingTrains?.[0] || 
+                     corridorMatchFromList ||
+                     null;
   
   let passingTrain: CrossingTimingDetails['passingTrain'] = null;
+  // Only display passingTrain if train is strictly verified in-sector and crossing is active/closing
   if (activeCand && (activeCand.number || activeCand.trainNumber || activeCand.name || activeCand.trainName)) {
-    passingTrain = {
-      trainNumber: String(activeCand.number || activeCand.trainNumber || activeCand.id || ''),
-      trainName: String(activeCand.name || activeCand.trainName || 'Express / Passenger'),
-      speedText: formatTrainSpeed(activeCand),
-      direction: activeCand.direction || crossing.trainDirection || undefined,
-      route: (activeCand.origin && activeCand.destination) ? `${activeCand.origin} → ${activeCand.destination}` : (crossing.line || 'Amritsar Corridor'),
-      status: activeCand.status,
-      dataState: activeCand.dataState
-    };
+    const isOutOfSector = activeCand.status === 'OUT_OF_SECTOR' || activeCand.isWithinAmritsarSector === false;
+    const isTermOrCancelled = activeCand.status === 'CANCELLED' || activeCand.status === 'TERMINATED' || activeCand.status === 'NOT_STARTED';
+    const isCorridorMatch = !activeCand.corridorId || activeCand.corridorId === crossing.corridorId;
+
+    if (!isOutOfSector && !isTermOrCancelled && isCorridorMatch && (isClosedNow || isClosingSoon || crossing.status === 'APPROACHING')) {
+      passingTrain = {
+        trainNumber: String(activeCand.number || activeCand.trainNumber || activeCand.id || ''),
+        trainName: String(activeCand.name || activeCand.trainName || 'Express / Passenger'),
+        speedText: formatTrainSpeed(activeCand),
+        direction: activeCand.direction || crossing.trainDirection || undefined,
+        route: (activeCand.origin && activeCand.destination) ? `${activeCand.origin} → ${activeCand.destination}` : (crossing.line || 'Amritsar Corridor'),
+        status: activeCand.status,
+        dataState: activeCand.dataState
+      };
+    }
   }
 
   // 12. Verified last train passed metadata
@@ -603,7 +608,16 @@ export function getCrossingTimingDetails(
       isApproaching: true,
       locationText: typeof crossing.distanceAlongTrackKm === 'number' ? `~${crossing.distanceAlongTrackKm.toFixed(1)} km away` : 'On Approach Track'
     };
-  } else if (activeCand && (activeCand.number || activeCand.trainNumber || activeCand.name || activeCand.trainName)) {
+  } else if (
+    activeCand && 
+    (activeCand.number || activeCand.trainNumber || activeCand.name || activeCand.trainName) &&
+    activeCand.status !== 'OUT_OF_SECTOR' &&
+    activeCand.status !== 'CANCELLED' &&
+    activeCand.status !== 'TERMINATED' &&
+    activeCand.isWithinAmritsarSector !== false &&
+    (!activeCand.corridorId || activeCand.corridorId === crossing.corridorId) &&
+    (activeCand.isStationary || activeCand.status === 'PLATFORM_BOARDING' || (typeof activeCand.distanceFromAmritsarKm === 'number' && activeCand.distanceFromAmritsarKm <= 140))
+  ) {
     const isStationary = Boolean(
       activeCand.isStationaryAtPlatform || 
       activeCand.isStationary || 

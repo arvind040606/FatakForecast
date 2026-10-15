@@ -55,9 +55,9 @@ export const DataHealthView: React.FC<DataHealthViewProps> = ({ metrics }) => {
       {/* PAGE HEADER */}
       <div className="page-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px' }}>
         <div>
-          <h1 className="page-title">Data Health &amp; Pipeline Telemetry</h1>
+          <h1 className="page-title">Railway Data &amp; Service Health</h1>
           <p className="page-subtitle">
-            Live railway telemetry: RailKit Official IR SDK, IPstack Geolocation, OpenStreetMap, and OSRM
+            Live data feeds: Indian Railways live tracking, Amritsar railway corridors, and route navigation
           </p>
         </div>
 
@@ -83,11 +83,8 @@ export const DataHealthView: React.FC<DataHealthViewProps> = ({ metrics }) => {
       }}>
         <Info size={18} style={{ color: 'var(--color-primary-forest)', flexShrink: 0, marginTop: '2px' }} />
         <div style={{ fontSize: '12px', color: 'var(--text-secondary)', lineHeight: 1.6 }}>
-          <strong style={{ color: 'var(--color-primary-dark)' }}>Security &amp; Freshness Policy:</strong>{' '}
-          All upstream API credentials (RailKit, IPstack) are strictly isolated on the backend server and never exposed to the client bundle. 
-          Train status classifications are verified by telemetry freshness: <span style={{ color: 'var(--status-clear)', fontWeight: 600 }}>LIVE</span> (genuine provider telemetry), 
-          <span style={{ color: 'var(--status-warning)', fontWeight: 600 }}> STALE</span>, or <span style={{ color: 'var(--color-primary-forest)', fontWeight: 600 }}>SIMULATED</span>. 
-          Crossing gate closure windows are predictive physics estimates along curved OSM tracks and must never be interpreted as physical hardware sensor confirmations.
+          <strong style={{ color: 'var(--color-primary-dark)' }}>Live Data &amp; Safety Policy:</strong>{' '}
+          Train positions and status updates are verified for accuracy. Estimated closure times are calculated to help commuters plan ahead, and should always be accompanied by careful track observation when traveling.
         </div>
       </div>
 
@@ -102,7 +99,7 @@ export const DataHealthView: React.FC<DataHealthViewProps> = ({ metrics }) => {
         <div className="card" style={{ padding: '16px' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
             <span style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: 600, textTransform: 'uppercase' }}>
-              RailKit Official SDK
+              Indian Railways Live Feed
             </span>
             <TrainTrack size={14} style={{ color: 'var(--color-primary-forest)' }} />
           </div>
@@ -110,10 +107,10 @@ export const DataHealthView: React.FC<DataHealthViewProps> = ({ metrics }) => {
             {telemetry?.providers.railkit.status || health?.telemetryStatus.providerStatus || 'CONNECTED'}
           </div>
           <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
-            Latency: <strong style={{ color: 'var(--text-primary)', fontFamily: 'var(--font-mono)' }}>{telemetry?.providers.railkit.latencyMs ?? health?.telemetryStatus.latencyMs ?? metrics.feedLatencyMs ?? 250} ms</strong>
+            Response Time: <strong style={{ color: 'var(--text-primary)', fontFamily: 'var(--font-mono)' }}>{telemetry?.providers.railkit.latencyMs ?? health?.telemetryStatus.latencyMs ?? metrics.feedLatencyMs ?? 250} ms</strong>
           </div>
           <div style={{ fontSize: '10px', color: 'var(--text-secondary)', marginTop: '4px' }}>
-            Official IR live train telemetry &amp; schedules
+            Official live train tracking &amp; schedules
           </div>
         </div>
 
@@ -121,7 +118,7 @@ export const DataHealthView: React.FC<DataHealthViewProps> = ({ metrics }) => {
         <div className="card" style={{ padding: '16px' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
             <span style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: 600, textTransform: 'uppercase' }}>
-              Sector Corridors
+              Railway Corridors
             </span>
             <Radio size={14} style={{ color: 'var(--color-primary-forest)' }} />
           </div>
@@ -129,18 +126,18 @@ export const DataHealthView: React.FC<DataHealthViewProps> = ({ metrics }) => {
             4 Corridors Active
           </div>
           <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
-            Operational Radius: <strong style={{ color: 'var(--text-primary)', fontFamily: 'var(--font-mono)' }}>85 km</strong>
+            Coverage Radius: <strong style={{ color: 'var(--text-primary)', fontFamily: 'var(--font-mono)' }}>85 km</strong>
           </div>
           <div style={{ fontSize: '10px', color: 'var(--text-secondary)', marginTop: '4px' }}>
-            Northern Railway network corridors
+            Amritsar railway junction network
           </div>
         </div>
 
-        {/* IPstack Geolocation */}
+        {/* Location Services */}
         <div className="card" style={{ padding: '16px' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
             <span style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: 600, textTransform: 'uppercase' }}>
-              IPstack Geolocation
+              Location Services
             </span>
             <MapPin size={14} style={{ color: 'var(--color-accent-tangerine)' }} />
           </div>
@@ -148,10 +145,10 @@ export const DataHealthView: React.FC<DataHealthViewProps> = ({ metrics }) => {
             {telemetry?.providers.ipstack.status || 'CONNECTED'}
           </div>
           <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
-            Cache: <strong style={{ color: 'var(--text-primary)', fontFamily: 'var(--font-mono)' }}>{telemetry?.providers.ipstack.cachedEntries ?? 1} IP(s)</strong>
+            Status: <strong style={{ color: 'var(--text-primary)' }}>Active</strong>
           </div>
           <div style={{ fontSize: '10px', color: 'var(--text-secondary)', marginTop: '4px' }}>
-            Approximate IP fallback (GPS preferred)
+            Device GPS with network fallback
           </div>
         </div>
 
@@ -159,7 +156,7 @@ export const DataHealthView: React.FC<DataHealthViewProps> = ({ metrics }) => {
         <div className="card" style={{ padding: '16px' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
             <span style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: 600, textTransform: 'uppercase' }}>
-              OSM Overpass Grid
+              OpenStreetMap Tracks
             </span>
             <Layers size={14} style={{ color: 'var(--color-primary-forest)' }} />
           </div>
@@ -167,10 +164,10 @@ export const DataHealthView: React.FC<DataHealthViewProps> = ({ metrics }) => {
             Verified Active
           </div>
           <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
-            37 Crossings &amp; 80 Track Geometry Ways
+            37 Crossings &amp; Track Polylines
           </div>
           <div style={{ fontSize: '10px', color: 'var(--text-secondary)', marginTop: '4px' }}>
-            Curved permanent-way geometry
+            Official railway track geometry
           </div>
         </div>
       </div>
@@ -181,11 +178,11 @@ export const DataHealthView: React.FC<DataHealthViewProps> = ({ metrics }) => {
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <Activity size={16} style={{ color: 'var(--color-primary-forest)' }} />
             <span style={{ fontSize: '14px', fontWeight: 700, color: 'var(--color-primary-dark)' }}>
-              Provider Aggregation &amp; Telemetry
+              Train Tracking Data Pipeline
             </span>
           </div>
           <span className="badge badge-green" style={{ fontFamily: 'var(--font-mono)', fontSize: '11px' }}>
-            MODE: {telemetry?.overallStatus || metrics.provider || 'CONNECTED_DUAL'}
+            LIVE TRACKING
           </span>
         </div>
 
@@ -357,16 +354,16 @@ export const DataHealthView: React.FC<DataHealthViewProps> = ({ metrics }) => {
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <TrainTrack size={16} style={{ color: 'var(--color-primary-forest)' }} />
               <span style={{ fontSize: '14px', fontWeight: 700, color: 'var(--color-primary-dark)' }}>
-                RailKit Live Station Telemetry: Amritsar Jn (ASR)
+                Live Station Departures &amp; Arrivals: Amritsar Jn (ASR)
               </span>
             </div>
             <span style={{ fontSize: '11px', color: 'var(--text-secondary)', fontFamily: 'var(--font-mono)' }}>
-              Source: {stationBoard.provider} | Total Trains: {stationBoard.count}
+              Total Trains: {stationBoard.count}
             </span>
           </div>
 
           <div style={{ padding: '8px 20px', backgroundColor: 'var(--surface-warm)', fontSize: '11px', color: 'var(--text-secondary)' }}>
-            This live board is fetched directly from the upstream RailKit Indian Railways API via backend proxy.
+            Live station timetable and real-time train updates from Indian Railways.
           </div>
 
           <div style={{ overflowX: 'auto' }}>

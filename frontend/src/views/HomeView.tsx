@@ -1,40 +1,28 @@
 import React, { useState, useEffect } from 'react';
 import { 
-  Navigation, 
   MapPin, 
   Compass, 
   Clock, 
-  ArrowRight, 
-  ShieldAlert, 
   CheckCircle, 
   CheckCircle2,
   AlertTriangle, 
-  Car, 
-  Bike, 
-  Footprints, 
-  Sparkles, 
   Bookmark, 
   RefreshCw, 
   ExternalLink,
-  BellRing,
-  Info,
   GitFork,
   Train,
   TrainTrack,
-  Star
+  Star,
+  ArrowRight
 } from 'lucide-react';
 import { 
   RailwayCrossing, 
   SectorTrain, 
   RailwayCorridor, 
   OperationalMetrics, 
-  ActiveRoute, 
-  SavedPlace, 
-  TravelMode, 
-  PlannedJourney 
+  ActiveRoute
 } from '../types';
 import { nativeService } from '../services/nativeService';
-import { railwayApi } from '../services/apiService';
 import { AMRITSAR_LANDMARKS } from '../data/landmarks';
 import { findImpactingTrainForCrossing, getCrossingTimingDetails } from '../utils/trainHelpers';
 import { useSharedTimer, getAuthoritativeTargetEpoch, calculateRemainingSeconds, formatCountdown } from '../utils/timerManager';
@@ -66,21 +54,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
   const [manualLandmarkId, setManualLandmarkId] = useState<string>('');
   const [favIds, setFavIds] = useState<string[]>(() => nativeService.getFavoriteCrossingIds());
   
-  // Destination selection
-  const [savedPlaces, setSavedPlaces] = useState<SavedPlace[]>([]);
-  const [selectedDestId, setSelectedDestId] = useState<string>('ASR_STATION');
-  const [travelMode, setTravelMode] = useState<TravelMode>('car');
-
-  // Quick departure plan state
-  const [quickPlan, setQuickPlan] = useState<PlannedJourney | null>(null);
-  const [planLoading, setPlanLoading] = useState<boolean>(false);
-  const [reminderScheduled, setReminderScheduled] = useState<boolean>(false);
-
   useEffect(() => {
-    // Load saved places & mode preference
-    setSavedPlaces(nativeService.getSavedPlaces());
-    setTravelMode(nativeService.getTravelMode());
-
     // Check location permission
     nativeService.checkLocationPermission().then(status => {
       setLocationPermission(status);
@@ -140,74 +114,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
     setGpsLoading(false);
   };
 
-  // Re-calculate quick departure recommendation whenever location, destination or mode changes
-  useEffect(() => {
-    const originCoords: [number, number] = userLoc;
 
-    // Find destination coords
-    let destCoords: [number, number] = [31.6338, 74.8655]; // Amritsar Jn
-    const matchedPlace = savedPlaces.find(p => p.id === selectedDestId);
-    if (matchedPlace) {
-      destCoords = [matchedPlace.lat, matchedPlace.lng];
-    } else {
-      const matchedLandmark = AMRITSAR_LANDMARKS.find(l => l.id === selectedDestId);
-      if (matchedLandmark) {
-        destCoords = [matchedLandmark.lat, matchedLandmark.lng];
-      }
-    }
-
-    setPlanLoading(true);
-    railwayApi.planJourney(originCoords, destCoords, 0, travelMode)
-      .then(result => {
-        setQuickPlan(result);
-      })
-      .catch(err => {
-        console.warn('Quick plan calculation error', err);
-      })
-      .finally(() => {
-        setPlanLoading(false);
-      });
-  }, [gpsPos, selectedDestId, travelMode, savedPlaces]);
-
-  // Handle travel mode change
-  const handleModeChange = (mode: TravelMode) => {
-    setTravelMode(mode);
-    nativeService.setTravelMode(mode);
-    nativeService.triggerHaptic('light');
-  };
-
-  // Schedule departure reminder notification
-  const handleScheduleDepartureReminder = async () => {
-    if (!quickPlan) return;
-    const rec = quickPlan.recommendation;
-    const offsetMin = Math.round(rec.recommendedDepartureOffsetSec / 60);
-
-    const scheduledDate = rec.recommendedDepartureOffsetSec > 0
-      ? new Date(Date.now() + rec.recommendedDepartureOffsetSec * 1000)
-      : undefined;
-
-    const targetCrossing = quickPlan.primaryRoute?.crossings?.[0];
-    const ok = await nativeService.scheduleNotification({
-      title: rec.action === 'WAIT' ? `⏳ FatakForecast: Optimal Departure in ${offsetMin}m` : `🟢 FatakForecast: Clear to Depart`,
-      body: rec.summary,
-      category: 'departureReminders',
-      scheduledDate,
-      crossingId: targetCrossing?.id,
-      crossingName: targetCrossing?.name,
-      eventSignature: `home_dep:${targetCrossing?.id || 'route'}:${offsetMin}`,
-      actionUrl: '/planner'
-    });
-
-    if (ok) {
-      setReminderScheduled(true);
-      nativeService.triggerHaptic('success');
-      setTimeout(() => setReminderScheduled(false), 4000);
-    }
-  };
-
-  const rec = quickPlan?.recommendation;
-  const primaryRoute = quickPlan?.primaryRoute;
-  const crossingsOnRoute = primaryRoute?.crossings || [];
 
   return (
     <div className="page-container">
@@ -246,7 +153,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
                 fontWeight: 600
               }}>
                 <span style={{ width: '7px', height: '7px', borderRadius: '50%', backgroundColor: 'currentColor' }} />
-                {metrics.feedStatus === 'CONNECTED' ? 'Live Telemetry Connected' : 'Telemetry Disconnected'}
+                {metrics.feedStatus === 'CONNECTED' ? 'Live Railway Tracking Active' : 'Offline / Reconnecting'}
               </span>
             </div>
 
@@ -469,7 +376,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
                 </button>
               </div>
               <div style={{ fontSize: '11.5px', color: 'var(--accent-primary)', fontWeight: 600, marginTop: '2px' }}>
-                {nearestData.distKm} km away • ~{nearestData.driveTimeMin} min {travelMode} travel
+                {nearestData.distKm} km away • ~{nearestData.driveTimeMin} min drive travel
               </div>
               <div style={{ fontSize: '10.5px', color: 'var(--text-secondary)', marginTop: '2px' }}>
                 {nearestData.crossing.punjabiName} • {nearestData.crossing.locality || 'Amritsar'}
@@ -522,7 +429,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
                       return `Predicted closure at ${new Date(c.estimatedGateClosingTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
                     } catch (e) {}
                   }
-                  return c.status === 'CLOSED' ? 'Train traversing crossing' : 'Live railway radar telemetry';
+                  return c.status === 'CLOSED' ? 'Train passing crossing' : 'Live train tracking active';
                 })()}
               </div>
             </div>
@@ -551,7 +458,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
                   const c = nearestData.crossing;
                   if (c.status === 'CLOSED' || c.status === 'CLOSURE_REPORTED') {
                     const waitMin = (typeof c.remainingWaitSec === 'number' && c.remainingWaitSec > 0) ? Math.max(1, Math.round(c.remainingWaitSec / 60)) : null;
-                    return waitMin ? `Expected reopen in ~${waitMin} min` : 'Gates closed for train transit';
+                    return waitMin ? `Expected reopen in ~${waitMin} min` : 'Gates closed for passing train';
                   }
                   if (c.status === 'APPROACHING') {
                     return 'Closing soon — halt if signals flash';
@@ -571,10 +478,10 @@ export const HomeView: React.FC<HomeViewProps> = ({
                       : 'Waiting for track clearance confirmation';
                   }
                   if (c.status === 'APPROACHING') {
-                    return 'Train approaching corridor — prepare to stop';
+                    return 'Train approaching — prepare to stop';
                   }
                   if (c.status === 'UNKNOWN') {
-                    return 'Telemetry unconfirmed — proceed with caution';
+                    return 'Waiting for live update — proceed with caution';
                   }
                   return 'Roadway clear for vehicles';
                 })()}
@@ -604,7 +511,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
                     return 'Crossing is closing soon. Check alternate route on Journey Planner.';
                   }
                   if (c.status === 'UNKNOWN') {
-                    return 'Slow down and visually inspect tracks before crossing. Telemetry feed unverified.';
+                    return 'Slow down and visually inspect tracks before crossing. Live status updating.';
                   }
                   return 'Safe to proceed directly through crossing. Normal traffic flow.';
                 })()}
@@ -634,344 +541,6 @@ export const HomeView: React.FC<HomeViewProps> = ({
 
           {/* Embedded 3-Step Timeline for the Nearest Fatak */}
           <ClosureCountdown crossing={nearestData.crossing} showTimeline={true} />
-        </div>
-      )}
-
-      {/* QUICK DESTINATION & TRAVEL MODE SELECTOR */}
-      <div className="panel" style={{ padding: '14px 16px', marginBottom: '16px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px' }}>
-          <span style={{ fontFamily: 'var(--font-brand)', fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', color: 'var(--accent-emphasis)', letterSpacing: '0.04em' }}>
-            Frequent Amritsar Destinations
-          </span>
-          <button 
-            onClick={() => onNavigate('/saved-places')} 
-            className="btn btn-ghost"
-            style={{ fontSize: '12px', padding: '3px 8px' }}
-          >
-            <Star size={13} />
-            <span>Saved Crossings</span>
-          </button>
-        </div>
-
-        {/* Saved Places Horizontal Chips */}
-        <div style={{ display: 'flex', gap: '8px', overflowX: 'auto', paddingBottom: '8px', marginBottom: '14px' }}>
-          {savedPlaces.map(place => (
-            <button
-              key={place.id}
-              onClick={() => { setSelectedDestId(place.id); nativeService.triggerHaptic('light'); }}
-              style={{
-                backgroundColor: selectedDestId === place.id ? 'rgba(56, 189, 248, 0.15)' : 'var(--bg-secondary)',
-                border: `1.5px solid ${selectedDestId === place.id ? 'var(--accent-primary)' : 'var(--border-subtle)'}`,
-                borderRadius: 'var(--radius-md)',
-                padding: '9px 14px',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                whiteSpace: 'nowrap',
-                cursor: 'pointer',
-                color: selectedDestId === place.id ? 'var(--accent-primary)' : 'var(--text-primary)',
-                transition: 'all 0.15s ease'
-              }}
-            >
-              <MapPin size={14} color={selectedDestId === place.id ? 'var(--accent-primary)' : 'var(--text-secondary)'} />
-              <span style={{ fontSize: '12.5px', fontWeight: 600 }}>{place.name}</span>
-            </button>
-          ))}
-
-          {/* Quick Landmarks */}
-          {AMRITSAR_LANDMARKS.slice(0, 4).map(landmark => (
-            <button
-              key={landmark.id}
-              onClick={() => { setSelectedDestId(landmark.id); nativeService.triggerHaptic('light'); }}
-              style={{
-                backgroundColor: selectedDestId === landmark.id ? 'rgba(56, 189, 248, 0.15)' : 'var(--bg-secondary)',
-                border: `1.5px solid ${selectedDestId === landmark.id ? 'var(--accent-primary)' : 'var(--border-subtle)'}`,
-                borderRadius: 'var(--radius-md)',
-                padding: '9px 14px',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                whiteSpace: 'nowrap',
-                cursor: 'pointer',
-                color: selectedDestId === landmark.id ? 'var(--accent-primary)' : 'var(--text-secondary)',
-                transition: 'all 0.15s ease'
-              }}
-            >
-              <MapPin size={14} color={selectedDestId === landmark.id ? 'var(--accent-primary)' : 'var(--text-secondary)'} />
-              <span style={{ fontSize: '12.5px' }}>{landmark.name.split(' (')[0]}</span>
-            </button>
-          ))}
-        </div>
-
-        {/* Travel Mode Toggle */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingTop: '12px', borderTop: '1px solid var(--border-subtle)' }}>
-          <span style={{ fontSize: '12.5px', color: 'var(--text-secondary)', fontWeight: 600 }}>Travel Mode:</span>
-          <div style={{ display: 'flex', gap: '6px' }}>
-            <button
-              onClick={() => handleModeChange('car')}
-              style={{
-                backgroundColor: travelMode === 'car' ? 'var(--accent-primary)' : 'var(--bg-secondary)',
-                color: travelMode === 'car' ? 'var(--text-on-accent)' : 'var(--text-primary)',
-                border: `1px solid ${travelMode === 'car' ? 'var(--accent-primary)' : 'var(--border-subtle)'}`,
-                borderRadius: 'var(--radius-sm)',
-                padding: '6px 14px',
-                fontSize: '12px',
-                fontWeight: 600,
-                display: 'flex',
-                alignItems: 'center',
-                gap: '6px',
-                cursor: 'pointer'
-              }}
-            >
-              <Car size={14} />
-              <span>Car</span>
-            </button>
-
-            <button
-              onClick={() => handleModeChange('motorcycle')}
-              style={{
-                backgroundColor: travelMode === 'motorcycle' ? 'var(--accent-primary)' : 'var(--bg-secondary)',
-                color: travelMode === 'motorcycle' ? 'var(--text-on-accent)' : 'var(--text-primary)',
-                border: `1px solid ${travelMode === 'motorcycle' ? 'var(--accent-primary)' : 'var(--border-subtle)'}`,
-                borderRadius: 'var(--radius-sm)',
-                padding: '6px 14px',
-                fontSize: '12px',
-                fontWeight: 600,
-                display: 'flex',
-                alignItems: 'center',
-                gap: '6px',
-                cursor: 'pointer'
-              }}
-            >
-              <Bike size={14} />
-              <span>Motorcycle</span>
-            </button>
-
-            <button
-              onClick={() => handleModeChange('walking')}
-              style={{
-                backgroundColor: travelMode === 'walking' ? 'var(--accent-primary)' : 'var(--bg-secondary)',
-                color: travelMode === 'walking' ? 'var(--text-on-accent)' : 'var(--text-primary)',
-                border: `1px solid ${travelMode === 'walking' ? 'var(--accent-primary)' : 'var(--border-subtle)'}`,
-                borderRadius: 'var(--radius-sm)',
-                padding: '6px 14px',
-                fontSize: '12px',
-                fontWeight: 600,
-                display: 'flex',
-                alignItems: 'center',
-                gap: '6px',
-                cursor: 'pointer'
-              }}
-            >
-              <Footprints size={14} />
-              <span>Walk</span>
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* SMART DEPARTURE RECOMMENDATION ENGINE */}
-      <div style={{
-        backgroundColor: rec?.action === 'WAIT' 
-          ? 'rgba(239, 68, 68, 0.12)' 
-          : (rec?.action === 'CONSIDER_ALTERNATIVE' ? 'rgba(245, 158, 11, 0.12)' : 'rgba(16, 185, 129, 0.12)'),
-        border: `1.5px solid ${rec?.action === 'WAIT' ? 'rgba(239, 68, 68, 0.35)' : (rec?.action === 'CONSIDER_ALTERNATIVE' ? 'rgba(245, 158, 11, 0.35)' : 'rgba(16, 185, 129, 0.35)')}`,
-        borderRadius: 'var(--radius-lg)',
-        padding: '22px',
-        marginBottom: '24px',
-        boxShadow: 'var(--shadow-md)'
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <Sparkles size={17} color={rec?.action === 'WAIT' ? 'var(--accent-tangerine)' : 'var(--accent-primary)'} />
-            <span style={{ 
-              fontFamily: 'var(--font-brand)',
-              fontSize: '12px', 
-              fontWeight: 700, 
-              textTransform: 'uppercase', 
-              letterSpacing: '0.06em', 
-              color: rec?.action === 'WAIT' ? 'var(--accent-tangerine)' : 'var(--accent-primary)' 
-            }}>
-              Smart Departure Recommendation
-            </span>
-          </div>
-
-          <span style={{
-            fontSize: '11px',
-            fontWeight: 700,
-            padding: '4px 10px',
-            borderRadius: 'var(--radius-full)',
-            backgroundColor: 'var(--bg-surface)',
-            color: rec?.action === 'LEAVE_NOW' ? 'var(--status-open)' : 'var(--accent-tangerine)',
-            border: '1px solid var(--border-soft)'
-          }}>
-            {rec?.badge || '🟢 CLEAR TO DEPART'}
-          </span>
-        </div>
-
-        <h2 style={{ 
-          fontFamily: 'var(--font-brand)',
-          fontSize: '19px', 
-          fontWeight: 700, 
-          color: 'var(--text-primary)', 
-          margin: '0 0 6px 0' 
-        }}>
-          {rec?.summary || 'Computing optimal departure time...'}
-        </h2>
-        <p style={{ fontSize: '13.5px', color: 'var(--text-secondary)', margin: '0 0 16px 0', lineHeight: 1.5 }}>
-          {rec?.details || 'Analyzing train schedules and crossing status along your path.'}
-        </p>
-
-        {/* Journey Statistics Strip */}
-        {primaryRoute && (
-          <div style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(3, 1fr)',
-            gap: '12px',
-            backgroundColor: 'var(--bg-surface)',
-            borderRadius: 'var(--radius-md)',
-            border: '1px solid var(--border-soft)',
-            padding: '14px',
-            marginBottom: '16px'
-          }}>
-            <div>
-              <div style={{ fontSize: '10.5px', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600 }}>Estimated Travel</div>
-              <div style={{ fontSize: '17px', fontWeight: 700, color: 'var(--text-primary)', fontFamily: 'var(--font-mono)' }}>
-                {Math.round(primaryRoute.totalDurationSec / 60)} min
-              </div>
-              <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
-                {(primaryRoute.distanceMeters / 1000).toFixed(1)} km
-              </div>
-            </div>
-
-            <div>
-              <div style={{ fontSize: '10.5px', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600 }}>Railway Crossings</div>
-              <div style={{ 
-                fontSize: '17px', 
-                fontWeight: 700, 
-                color: crossingsOnRoute.some(c => c.conflictSeverity === 'HIGH') ? 'var(--critical-red)' : 'var(--text-primary)', 
-                fontFamily: 'var(--font-mono)' 
-              }}>
-                {crossingsOnRoute.length} Fataks
-              </div>
-              <div style={{ fontSize: '11px', color: crossingsOnRoute.some(c => c.conflictSeverity === 'HIGH') ? 'var(--critical-red)' : 'var(--status-open)' }}>
-                {crossingsOnRoute.filter(c => c.conflictSeverity === 'HIGH').length} closed
-              </div>
-            </div>
-
-            <div>
-              <div style={{ fontSize: '10.5px', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600 }}>Arrival ETA</div>
-              <div style={{ fontSize: '17px', fontWeight: 700, color: 'var(--accent-primary)', fontFamily: 'var(--font-mono)' }}>
-                {new Date(primaryRoute.estimatedArrivalTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-              </div>
-              <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
-                {travelMode} mode
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Action Buttons: Schedule Reminder & Open Full Route */}
-        <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-          <button
-            onClick={handleScheduleDepartureReminder}
-            className="btn btn-primary"
-            style={{ flex: 1, minWidth: '160px', padding: '10px 18px' }}
-          >
-            <BellRing size={15} />
-            <span>{reminderScheduled ? '✓ Reminder Scheduled!' : 'Set Departure Alarm'}</span>
-          </button>
-
-          <button
-            onClick={() => onNavigate('/planner')}
-            className="btn btn-secondary"
-            style={{ flex: 1, minWidth: '160px', padding: '10px 18px' }}
-          >
-            <Navigation size={15} color="var(--accent-primary)" />
-            <span>Open Smart Journey</span>
-            <ArrowRight size={15} />
-          </button>
-        </div>
-
-        {/* Uncertainty Disclosure Note */}
-        {rec?.uncertaintyNote && (
-          <div style={{ marginTop: '12px', fontSize: '11.5px', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <Info size={13} />
-            <span>{rec.uncertaintyNote}</span>
-          </div>
-        )}
-      </div>
-
-      {/* CROSSINGS ALONG ROUTE (IF ANY) */}
-      {crossingsOnRoute.length > 0 && (
-        <div className="panel" style={{ padding: '18px 20px', marginBottom: '24px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <ShieldAlert size={17} color="var(--warning-amber)" />
-              <h3 style={{ fontFamily: 'var(--font-brand)', fontSize: '15px', fontWeight: 700, margin: 0, color: 'var(--accent-emphasis)' }}>
-                Crossings on Your Commute
-              </h3>
-            </div>
-            <span style={{ fontSize: '11.5px', color: 'var(--text-muted)' }}>
-              {crossingsOnRoute.length} detected on road path
-            </span>
-          </div>
-
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-            {crossingsOnRoute.map(hit => (
-              <div 
-                key={hit.id}
-                onClick={() => {
-                  const originalCrossing = crossings.find(c => c.id === hit.id);
-                  if (originalCrossing) {
-                    onSelectCrossing(originalCrossing);
-                  }
-                }}
-                style={{
-                  backgroundColor: 'var(--bg-surface)',
-                  border: `1px solid ${hit.conflictSeverity === 'HIGH' ? 'var(--status-closed-border)' : 'var(--border-soft)'}`,
-                  borderRadius: 'var(--radius-md)',
-                  padding: '14px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  cursor: 'pointer',
-                  boxShadow: 'var(--shadow-sm)'
-                }}
-              >
-                <div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <span style={{ fontWeight: 700, fontSize: '14px', color: 'var(--text-primary)' }}>
-                      {hit.name}
-                    </span>
-                    <span style={{ 
-                      fontSize: '10.5px', 
-                      padding: '2px 8px', 
-                      borderRadius: 'var(--radius-full)',
-                      backgroundColor: hit.currentStatus === 'CLOSED' ? 'var(--status-closed-bg)' : 'rgba(16, 185, 129, 0.15)',
-                      color: hit.currentStatus === 'CLOSED' ? 'var(--status-closed)' : 'var(--status-open)',
-                      border: `1px solid ${hit.currentStatus === 'CLOSED' ? 'var(--status-closed-border)' : 'rgba(16, 185, 129, 0.3)'}`,
-                      fontWeight: 700
-                    }}>
-                      {hit.gateStatusLabel}
-                    </span>
-                  </div>
-                  <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '3px' }}>
-                    {hit.locality} • Reaching in ~{Math.round(hit.travelTimeToCrossingSec / 60)} min ({hit.distanceAlongRouteKm} km along route)
-                  </div>
-                </div>
-
-                <div style={{ textAlign: 'right' }}>
-                  <div style={{ fontSize: '12px', fontWeight: 600, color: hit.conflictSeverity === 'HIGH' ? 'var(--status-closed)' : 'var(--text-primary)' }}>
-                    {hit.conflictSeverity === 'HIGH' ? `+${Math.round((hit.delaySec || 0) / 60)}m estimated delay` : 'Clear passage'}
-                  </div>
-                  <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-                    ETA: {new Date(hit.userArrivalTimestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
         </div>
       )}
 
@@ -1068,7 +637,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
                       ) : timing.isTimingUnavailable ? (
                         'Timing unconfirmed'
                       ) : (
-                        'Roadway Open · Corridor Clear'
+                        'Road Open · Tracks Clear'
                       )}
                     </span>
                   </div>

@@ -34,7 +34,7 @@ export const MetricsBar: React.FC<MetricsBarProps> = ({ metrics }) => {
     {
       label: 'PREDICTED CLOSED',
       value: metrics.closedCount,
-      subtext: metrics.closedCount > 0 ? 'Interlocking Locked' : 'All Clear',
+      subtext: metrics.closedCount > 0 ? 'Gates Closed' : 'All Clear',
       icon: AlertCircle,
       color: metrics.closedCount > 0 ? 'var(--status-closed)' : 'var(--text-muted)',
       bg: metrics.closedCount > 0 ? 'var(--status-closed-bg)' : 'rgba(255, 255, 255, 0.02)'
@@ -42,23 +42,23 @@ export const MetricsBar: React.FC<MetricsBarProps> = ({ metrics }) => {
     {
       label: 'APPROACHING / WARN',
       value: metrics.approachingCount,
-      subtext: metrics.approachingCount > 0 ? 'Closure Imminent' : 'None in block',
+      subtext: metrics.approachingCount > 0 ? 'Closing Soon' : 'Tracks Clear',
       icon: Clock,
       color: metrics.approachingCount > 0 ? 'var(--status-approaching)' : 'var(--text-muted)',
       bg: metrics.approachingCount > 0 ? 'var(--status-approaching-bg)' : 'rgba(255, 255, 255, 0.02)'
     },
     {
-      label: 'ACTIVE SECTOR TRAINS',
+      label: 'TRAINS NEARBY',
       value: metrics.activeSectorTrains,
-      subtext: 'Live Telemetry Linked',
+      subtext: 'Live GPS Linked',
       icon: Train,
       color: 'var(--accent-cyan-light)',
       bg: 'rgba(125, 211, 252, 0.08)'
     },
     {
-      label: 'FEED FRESHNESS',
-      value: metrics.feedLatencyMs != null ? `${metrics.feedLatencyMs}ms` : 'Not Measured',
-      subtext: metrics.feedStatus === 'CONNECTED' ? 'Live Provider Stream' : metrics.feedStatus === 'ONLINE_SYNCHRONIZED' ? 'WebSocket Stream' : 'Provider Disconnected',
+      label: 'RAILWAY FEED',
+      value: metrics.feedStatus === 'CONNECTED' ? 'Live' : 'Syncing',
+      subtext: metrics.feedStatus === 'CONNECTED' ? 'Real-Time Updates' : 'Connecting...',
       icon: Wifi,
       color: metrics.feedStatus === 'CONNECTED' ? 'var(--status-open)' : 'var(--text-muted)',
       bg: metrics.feedStatus === 'CONNECTED' ? 'rgba(16, 185, 129, 0.08)' : 'rgba(239, 68, 68, 0.08)'

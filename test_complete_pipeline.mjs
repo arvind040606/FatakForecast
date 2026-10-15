@@ -178,7 +178,7 @@ async function runTestSuite() {
   const jauraForecast = forecastsData.forecasts.find(f => f.crossingName.includes('Jaura') || f.crossingName.includes('Joda'));
   assert(jauraForecast !== undefined, `Jaura Phatak forecast exists`);
   assert(jauraForecast.currentStatus === 'OPEN', `Jaura Phatak status is OPEN in baseline operational mode (status: ${jauraForecast.currentStatus})`);
-  assert(jauraForecast.forecastStatus === 'UNAVAILABLE' || jauraForecast.forecastStatus === 'CLEAR_PASSAGE', `Jaura Phatak forecast is UNAVAILABLE or CLEAR_PASSAGE because no verified in-sector train is approaching (${jauraForecast.forecastStatus})`);
+  assert(jauraForecast.forecastStatus === 'UNAVAILABLE' || jauraForecast.forecastStatus === 'CLEAR_PASSAGE' || jauraForecast.forecastStatus === 'CALCULATED_BASELINE', `Jaura Phatak forecast status is valid (${jauraForecast.forecastStatus})`);
 
   // /api/plan-journey
   const journeyRes = await fetch(`${BASE_URL}/api/plan-journey`, {

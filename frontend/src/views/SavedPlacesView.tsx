@@ -144,7 +144,7 @@ export const SavedPlacesView: React.FC<SavedPlacesViewProps> = ({
                 </span>
               </div>
               <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '2px' }}>
-                ਸੰਭਾਲੇ ਹੋਏ ਫਾਟਕ • Live closure countdowns, permanent-way train status, and approach alerts
+                ਸੰਭਾਲੇ ਹੋਏ ਫਾਟਕ • Live closure countdowns, train status, and approach alerts
               </div>
             </div>
           </div>

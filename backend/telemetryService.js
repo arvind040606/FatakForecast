@@ -308,16 +308,81 @@ export class TelemetryService {
     const delayMinutes = Number(data.delay_minutes ?? data.delayMinutes ?? data.currentLocation?.delayMinutes ?? 0);
 
     const statusRaw = String(data.status || data.running_status || '').toLowerCase();
-    const direction = (destCode === 'ASR' || destName.toLowerCase().includes('amritsar')) ? 'DOWN' : 'UP';
+    // Dynamic Route & Direction Resolution for Amritsar Sector
+    const PTK_STATIONS = ['VKA', 'BAT', 'DHW', 'GSP', 'DNN', 'PTK', 'KNG', 'JNT'];
+    const TT_STATIONS = ['BGTN', 'SBS', 'SNS', 'TTO', 'PAX', 'KEMK', 'DUQ'];
+    const ATT_STATIONS = ['CIA', 'KAS', 'ATT'];
+    const JUC_STATIONS = ['MOW', 'JNL', 'TRA', 'BTR', 'BEAS', 'DIW', 'HRP', 'HMR', 'KRE', 'SRX', 'JUC', 'JRC', 'CEU', 'PGW', 'GRY', 'PHR', 'LDH'];
 
-    // Corridor assignment along Amritsar corridors
     let corridorId = 'CORR_ASR_JUC';
-    if (['74688', '74687', '74685', '04688', '04690'].includes(trainNumber)) {
-      corridorId = 'CORR_ASR_TT';
-    } else if (['06935', '06936', '06938', '14633', '14634', '19416'].includes(trainNumber)) {
-      corridorId = 'CORR_ASR_PTK';
-    } else if (['04612', '04611'].includes(trainNumber)) {
-      corridorId = 'CORR_ASR_ATT';
+    let direction = 'UP';
+
+    const nextStn = data.currentLocation?.nextStation?.stnCode || data.nextHalt?.stnCode || null;
+    const currStn = currentStationCode;
+
+    // Check if route schedule exists to determine sequence relative to ASR
+    if (Array.isArray(data.route) && data.route.length > 0) {
+      const asrStopIndex = data.route.findIndex(s => (s.stnCode === 'ASR' || s.stationCode === 'ASR'));
+      const currStopIndex = data.route.findIndex(s => (s.stnCode === currStn || s.stationCode === currStn));
+      const nextStopIndex = nextStn ? data.route.findIndex(s => (s.stnCode === nextStn || s.stationCode === nextStn)) : -1;
+
+      if (asrStopIndex !== -1) {
+        if (currStopIndex !== -1) {
+          if (currStopIndex < asrStopIndex) {
+            // Train is currently before ASR on its route => Traveling DOWN towards Amritsar!
+            direction = 'DOWN';
+            const priorStations = data.route.slice(currStopIndex, asrStopIndex).map(s => s.stnCode || s.stationCode);
+            if (priorStations.some(c => PTK_STATIONS.includes(c))) corridorId = 'CORR_ASR_PTK';
+            else if (priorStations.some(c => TT_STATIONS.includes(c))) corridorId = 'CORR_ASR_TT';
+            else if (priorStations.some(c => ATT_STATIONS.includes(c))) corridorId = 'CORR_ASR_ATT';
+            else corridorId = 'CORR_ASR_JUC';
+          } else if (currStopIndex > asrStopIndex) {
+            // Train has already departed ASR on a multi-leg journey => Traveling UP away from Amritsar!
+            direction = 'UP';
+            const subsequentStations = data.route.slice(asrStopIndex + 1, currStopIndex + 2).map(s => s.stnCode || s.stationCode);
+            if (subsequentStations.some(c => JUC_STATIONS.includes(c))) corridorId = 'CORR_ASR_JUC';
+            else if (subsequentStations.some(c => TT_STATIONS.includes(c))) corridorId = 'CORR_ASR_TT';
+            else if (subsequentStations.some(c => PTK_STATIONS.includes(c))) corridorId = 'CORR_ASR_PTK';
+            else if (subsequentStations.some(c => ATT_STATIONS.includes(c))) corridorId = 'CORR_ASR_ATT';
+            else corridorId = 'CORR_ASR_JUC';
+          } else {
+            // Train is currently AT Amritsar Junction (currStopIndex === asrStopIndex)
+            if (nextStopIndex > asrStopIndex) {
+              direction = 'UP';
+              const nextStations = data.route.slice(asrStopIndex + 1).map(s => s.stnCode || s.stationCode);
+              if (nextStations.some(c => JUC_STATIONS.includes(c))) corridorId = 'CORR_ASR_JUC';
+              else if (nextStations.some(c => TT_STATIONS.includes(c))) corridorId = 'CORR_ASR_TT';
+              else if (nextStations.some(c => PTK_STATIONS.includes(c))) corridorId = 'CORR_ASR_PTK';
+              else if (nextStations.some(c => ATT_STATIONS.includes(c))) corridorId = 'CORR_ASR_ATT';
+            } else {
+              direction = 'DOWN';
+              const prevStations = data.route.slice(0, asrStopIndex).map(s => s.stnCode || s.stationCode);
+              if (prevStations.some(c => PTK_STATIONS.includes(c))) corridorId = 'CORR_ASR_PTK';
+              else if (prevStations.some(c => TT_STATIONS.includes(c))) corridorId = 'CORR_ASR_TT';
+              else if (prevStations.some(c => ATT_STATIONS.includes(c))) corridorId = 'CORR_ASR_ATT';
+              else corridorId = 'CORR_ASR_JUC';
+            }
+          }
+        } else {
+          direction = (destCode === 'ASR' || destName.toLowerCase().includes('amritsar')) ? 'DOWN' : 'UP';
+          const stnCodes = data.route.map(r => String(r.stnCode || '').toUpperCase());
+          if (stnCodes.some(c => PTK_STATIONS.includes(c))) corridorId = 'CORR_ASR_PTK';
+          else if (stnCodes.some(c => TT_STATIONS.includes(c))) corridorId = 'CORR_ASR_TT';
+          else if (stnCodes.some(c => ATT_STATIONS.includes(c))) corridorId = 'CORR_ASR_ATT';
+          else corridorId = 'CORR_ASR_JUC';
+        }
+      } else {
+        direction = (destCode === 'ASR' || destName.toLowerCase().includes('amritsar')) ? 'DOWN' : 'UP';
+      }
+    } else {
+      direction = (destCode === 'ASR' || destName.toLowerCase().includes('amritsar')) ? 'DOWN' : 'UP';
+      if (PTK_STATIONS.includes(currStn) || PTK_STATIONS.includes(nextStn)) corridorId = 'CORR_ASR_PTK';
+      else if (TT_STATIONS.includes(currStn) || TT_STATIONS.includes(nextStn)) corridorId = 'CORR_ASR_TT';
+      else if (ATT_STATIONS.includes(currStn) || ATT_STATIONS.includes(nextStn)) corridorId = 'CORR_ASR_ATT';
+      else if (['74688', '74687', '74685', '74684', '74686', '74681', '74682', '74683', '04688', '04690', '04687', '04689'].includes(trainNumber)) corridorId = 'CORR_ASR_TT';
+      else if (['06935', '06936', '06938', '14633', '14634', '19416', '19415', '04614', '04613', '14034', '14033'].includes(trainNumber)) corridorId = 'CORR_ASR_PTK';
+      else if (['04612', '04611'].includes(trainNumber)) corridorId = 'CORR_ASR_ATT';
+      else corridorId = 'CORR_ASR_JUC';
     }
 
     // Status classification
@@ -358,11 +423,20 @@ export class TelemetryService {
     }
 
     // Operational status
+    const isAtStation = Boolean(
+      statusRaw === 'at-station' ||
+      statusRaw === 'at_station' ||
+      statusRaw === 'start' ||
+      data.currentLocation?.status === 'at-station' ||
+      data.status === 'at-station' ||
+      (data.currentLocation && data.currentLocation.speedKmh === 0 && currentStationCode !== 'UNKNOWN')
+    );
+
     let operationalStatus = 'IN_TRANSIT';
     if (isCancelled) operationalStatus = 'CANCELLED';
     else if (isNotStarted) operationalStatus = 'NOT_STARTED';
     else if (isTerminated) operationalStatus = 'TERMINATED';
-    else if (currentStationCode === sourceCode) operationalStatus = 'PLATFORM_BOARDING';
+    else if (isAtStation || currentStationCode === sourceCode) operationalStatus = 'PLATFORM_BOARDING';
     else if (!isWithinSector) operationalStatus = 'OUT_OF_SECTOR';
 
     // Observation timestamp & freshness
@@ -403,10 +477,10 @@ export class TelemetryService {
       speedKmH = Math.round(data.speed_kmh);
       hasLiveSpeedMeasurement = true;
       speedSource = 'PROVIDER_LIVE_SPEED';
-    } else if (operationalStatus === 'TERMINATED' || isNotStarted) {
+    } else if (operationalStatus === 'TERMINATED' || isNotStarted || operationalStatus === 'PLATFORM_BOARDING') {
       speedKmH = 0;
       hasLiveSpeedMeasurement = true;
-      speedSource = 'ZERO_SPEED_TERMINAL';
+      speedSource = operationalStatus === 'PLATFORM_BOARDING' ? 'AT_STATION_PLATFORM' : 'ZERO_SPEED_TERMINAL';
     }
 
     return {

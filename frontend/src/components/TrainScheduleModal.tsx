@@ -353,7 +353,7 @@ export const TrainScheduleModal: React.FC<TrainScheduleModalProps> = ({
               </div>
               <div style={{ fontSize: '12.5px', marginTop: '4px', maxWidth: '380px', margin: '4px auto 0' }}>
                 {schedule.length === 0
-                  ? 'Real-time telemetry continues tracking this train movement along active track corridors.'
+                  ? 'Train timetable is temporarily unavailable. Live train position continues to be tracked on the map.'
                   : 'Try clearing the search query to show all station stops along this route.'}
               </div>
             </div>

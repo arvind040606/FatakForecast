@@ -77,19 +77,19 @@ export const AnalyticsView: React.FC = () => {
             0 Logged
           </div>
           <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
-            Requires authorized IoT gate sensor telemetry
+            Requires authorized railway gate equipment
           </div>
         </div>
 
         <div className="card" style={{ padding: '16px' }}>
           <div style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: 600, textTransform: 'uppercase' }}>
-            Class B: Synthetic Test Data
+            Class B: Track Calculations
           </div>
           <div style={{ fontSize: '24px', fontWeight: 700, color: 'var(--color-primary-forest)', fontFamily: 'var(--font-mono)', margin: '4px 0' }}>
             Active Simulation
           </div>
           <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
-            Kinematic baseline along OSM track polylines
+            Distance calculation along OSM track geometry
           </div>
         </div>
 
@@ -107,10 +107,10 @@ export const AnalyticsView: React.FC = () => {
 
         <div className="card" style={{ padding: '16px' }}>
           <div style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: 600, textTransform: 'uppercase' }}>
-            Class D: Missing Telemetry
+            Class D: Direct Gate Relays
           </div>
           <div style={{ fontSize: '24px', fontWeight: 700, color: 'var(--status-critical)', fontFamily: 'var(--font-mono)', margin: '4px 0' }}>
-            CRIS &amp; Relays
+            Gate Sensors
           </div>
           <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
             Pending formal railway API access authorization
@@ -320,7 +320,7 @@ export const AnalyticsView: React.FC = () => {
               </tr>
               <tr>
                 <td style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
-                  Train Movement Telemetry
+                  Train Movement Tracking
                 </td>
                 <td>
                   <span className="badge badge-amber">

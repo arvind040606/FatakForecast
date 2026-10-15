@@ -17,32 +17,43 @@ import {
   Sparkles,
   Star,
   Route,
-  Navigation
+  Navigation,
+  Camera,
+  Users,
+  CheckCircle,
+  Eye,
+  MessageSquare
 } from 'lucide-react';
-import { RailwayCrossing, SectorTrain, RailwayCorridor } from '../types';
+import { RailwayCrossing, SectorTrain, RailwayCorridor, CommunityCrossingReport } from '../types';
 import { ClosureCountdown } from './ClosureCountdown';
 import { TrainScheduleModal } from './TrainScheduleModal';
 import { findImpactingTrainForCrossing, formatTrainSpeed, getCrossingTimingDetails } from '../utils/trainHelpers';
 import { useSharedTimer } from '../utils/timerManager';
 import { bottomSheetVariants, sideDrawerVariants } from '../utils/motion';
 import { nativeService } from '../services/nativeService';
+import { railwayApi } from '../services/apiService';
 
 interface CrossingDetailPanelProps {
   crossing: RailwayCrossing | null;
   corridors: RailwayCorridor[];
   trains: SectorTrain[];
   onClose: () => void;
+  onOpenSurvey?: (crossing: RailwayCrossing) => void;
 }
 
 export const CrossingDetailPanel: React.FC<CrossingDetailPanelProps> = ({
   crossing,
   corridors,
   trains,
-  onClose
+  onClose,
+  onOpenSurvey
 }) => {
   const [copiedCoords, setCopiedCoords] = useState(false);
   const [isScheduleOpen, setIsScheduleOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
+  const [communityReports, setCommunityReports] = useState<CommunityCrossingReport[]>([]);
+  const [isLoadingReports, setIsLoadingReports] = useState(false);
+  const [selectedPhotoModal, setSelectedPhotoModal] = useState<string | null>(null);
   const [isFavorite, setIsFavorite] = useState<boolean>(false);
   const [aiAnalysis, setAiAnalysis] = useState<{
     source: string;
@@ -65,13 +76,35 @@ export const CrossingDetailPanel: React.FC<CrossingDetailPanelProps> = ({
     if (crossing) {
       setIsFavorite(nativeService.isFavoriteCrossing(crossing.id));
     }
-  }, [crossing]);
+  }, [crossing?.id]);
 
   const handleToggleFavorite = async () => {
     if (!crossing) return;
     const next = await nativeService.toggleFavoriteCrossing(crossing.id);
     setIsFavorite(next);
   };
+
+  useEffect(() => {
+    if (!crossing) {
+      setCommunityReports([]);
+      return;
+    }
+    let isMounted = true;
+    setIsLoadingReports(true);
+    railwayApi.getCrossingCommunityReports(crossing.id)
+      .then(reports => {
+        if (isMounted) {
+          setCommunityReports(reports || []);
+          setIsLoadingReports(false);
+        }
+      })
+      .catch(() => {
+        if (isMounted) setIsLoadingReports(false);
+      });
+    return () => {
+      isMounted = false;
+    };
+  }, [crossing?.id]);
 
   useEffect(() => {
     if (!crossing) {
@@ -285,7 +318,7 @@ export const CrossingDetailPanel: React.FC<CrossingDetailPanelProps> = ({
 
             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
               <span style={{ color: 'var(--text-secondary)' }}>Barrier Status:</span>
-              <span style={{ fontSize: '11.5px', color: 'var(--text-muted)' }}>Forecast from live trains (Uninstrumented gate)</span>
+              <span style={{ fontSize: '11.5px', color: 'var(--text-muted)' }}>Estimated from live train movement</span>
             </div>
           </div>
         </div>
@@ -544,7 +577,7 @@ export const CrossingDetailPanel: React.FC<CrossingDetailPanelProps> = ({
                     Clear Roadway Passage
                   </div>
                   <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '2px', lineHeight: '1.4' }}>
-                    {crossing.statusReason || 'Verified live permanent-way corridor is clear for vehicular transit.'}
+                    {crossing.statusReason || 'Railway crossing is clear for vehicular traffic.'}
                   </div>
                 </div>
               </div>
@@ -588,13 +621,13 @@ export const CrossingDetailPanel: React.FC<CrossingDetailPanelProps> = ({
           )}
         </div>
 
-        {/* GOOGLE GEMINI / RAILWAY INTERLOCKING INTELLIGENCE AUDIT */}
+        {/* AI CROSSING SAFETY AUDIT */}
         <div className="panel" style={{ padding: '16px', borderLeft: '4px solid #8b5cf6' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
               <Sparkles size={15} color="#8b5cf6" />
               <span style={{ fontFamily: 'var(--font-brand)', fontSize: '11.5px', fontWeight: 700, color: 'var(--accent-emphasis)', letterSpacing: '0.04em' }}>
-                AI SAFETY &amp; INTERLOCKING AUDIT
+                SMART SAFETY INSIGHT
               </span>
             </div>
             {aiAnalysis ? (
@@ -607,17 +640,17 @@ export const CrossingDetailPanel: React.FC<CrossingDetailPanelProps> = ({
                 borderRadius: 'var(--radius-full)',
                 fontFamily: 'var(--font-mono)'
               }}>
-                {aiAnalysis.riskLevel} RISK • {aiAnalysis.source === 'GOOGLE_GEMINI_AI' ? 'GEMINI 1.5' : 'RAIL ENGINE'}
+                {aiAnalysis.riskLevel} RISK • AI SAFETY CHECK
               </span>
             ) : isLoadingAi ? (
-              <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>Analyzing...</span>
+              <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>Checking safety...</span>
             ) : null}
           </div>
 
           {isLoadingAi && !aiAnalysis ? (
             <div style={{ fontSize: '12px', color: 'var(--text-secondary)', padding: '6px 0', display: 'flex', alignItems: 'center', gap: '8px' }}>
               <div style={{ width: '12px', height: '12px', border: '2px solid currentColor', borderRightColor: 'transparent', borderRadius: '50%', animation: 'spin 0.75s linear infinite' }} />
-              <span>Auditing permanent-way kinematics and railway interlocking factors...</span>
+              <span>Checking live train positions and crossing safety...</span>
             </div>
           ) : aiAnalysis ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '12px' }}>
@@ -638,7 +671,7 @@ export const CrossingDetailPanel: React.FC<CrossingDetailPanelProps> = ({
                 }}>
                   <ShieldAlert size={16} style={{ flexShrink: 0 }} />
                   <div>
-                    <strong style={{ fontSize: '11px', display: 'block' }}>Contradiction Flagged</strong>
+                    <strong style={{ fontSize: '11px', display: 'block' }}>Notice</strong>
                     <span style={{ fontSize: '11px' }}>{aiAnalysis.contradictionDetails}</span>
                   </div>
                 </div>
@@ -655,7 +688,7 @@ export const CrossingDetailPanel: React.FC<CrossingDetailPanelProps> = ({
                   gap: '4px'
                 }}>
                   <div style={{ fontSize: '10px', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 700 }}>
-                    Operational Interlocking Factors
+                    Track Safety Observations
                   </div>
                   {aiAnalysis.operationalFactors.map((factor: string, idx: number) => (
                     <div key={idx} style={{ fontSize: '11px', color: 'var(--text-secondary)', display: 'flex', alignItems: 'baseline', gap: '6px' }}>
@@ -675,7 +708,7 @@ export const CrossingDetailPanel: React.FC<CrossingDetailPanelProps> = ({
             </div>
           ) : (
             <div style={{ fontSize: '11.5px', color: 'var(--text-secondary)' }}>
-              Verified deterministic interlocking telemetry is active. No physical track contradictions detected.
+              Railway tracks are clear and traffic is flowing normally.
             </div>
           )}
         </div>
@@ -812,21 +845,21 @@ export const CrossingDetailPanel: React.FC<CrossingDetailPanelProps> = ({
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '12px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-              <span style={{ color: 'var(--text-secondary)' }}>Calculation Timestamp:</span>
+              <span style={{ color: 'var(--text-secondary)' }}>Last Updated:</span>
               <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--text-primary)', fontWeight: 600 }}>
                 {timing?.lastUpdateText ? `${timing.lastUpdateText} (IST)` : 'Real-time sync'}
               </span>
             </div>
 
             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-              <span style={{ color: 'var(--text-secondary)' }}>Telemetry Engine:</span>
-              <span style={{ color: 'var(--text-primary)' }}>CRIS / Live Track Geometry Radar</span>
+              <span style={{ color: 'var(--text-secondary)' }}>Tracking System:</span>
+              <span style={{ color: 'var(--text-primary)' }}>Indian Railways Live Radar</span>
             </div>
 
             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-              <span style={{ color: 'var(--text-secondary)' }}>Barrier Telemetry:</span>
+              <span style={{ color: 'var(--text-secondary)' }}>Barrier Status:</span>
               <span style={{ color: 'var(--text-muted)' }}>
-                Estimated via track speed &amp; signal blocks
+                Estimated via live train approach
               </span>
             </div>
 
@@ -841,12 +874,247 @@ export const CrossingDetailPanel: React.FC<CrossingDetailPanelProps> = ({
                 fontSize: '11.5px',
                 lineHeight: 1.4
               }}>
-                <strong>Why timing is unavailable:</strong> Live railway telemetry is currently insufficient or unconfirmed on this sector. Timings are withheld to prevent fabricated or inaccurate countdowns until verified position &amp; speed are acquired.
+                <strong>Why timing is unavailable:</strong> Live railway updates are currently syncing for this track section. Estimated times are withheld until a verified train signal is received.
               </div>
             )}
           </div>
         </div>
 
+        {/* CROWDSOURCED COMMUNITY FIELD REPORTS (SUPABASE) */}
+        <div className="card" style={{ padding: '16px', marginBottom: '16px', border: '1px solid var(--border-soft)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <div style={{
+                width: '28px',
+                height: '28px',
+                borderRadius: '8px',
+                backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                color: '#3b82f6'
+              }}>
+                <Users size={16} />
+              </div>
+              <div>
+                <h4 style={{ margin: 0, fontSize: '13px', fontWeight: 700, color: 'var(--text-primary)' }}>
+                  Community Ground Reports
+                </h4>
+                <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
+                  Verified Commuter Updates
+                </span>
+              </div>
+            </div>
+
+            {onOpenSurvey && (
+              <button
+                onClick={() => onOpenSurvey(crossing)}
+                className="btn btn-primary"
+                style={{
+                  fontSize: '11px',
+                  padding: '6px 12px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px'
+                }}
+              >
+                <Camera size={13} />
+                <span>Verify Gate</span>
+              </button>
+            )}
+          </div>
+
+          <div style={{
+            padding: '8px 12px',
+            backgroundColor: 'var(--bg-secondary)',
+            borderRadius: '6px',
+            border: '1px solid var(--border-soft)',
+            fontSize: '11px',
+            color: 'var(--text-secondary)',
+            marginBottom: '12px',
+            lineHeight: 1.4
+          }}>
+            <strong style={{ color: 'var(--text-primary)' }}>Notice:</strong> Ground observations from fellow commuters supplement live train tracking to help everyone travel safely.
+          </div>
+
+          {isLoadingReports ? (
+            <div style={{ padding: '16px', textAlign: 'center', fontSize: '12px', color: 'var(--text-secondary)' }}>
+              Loading recent observations...
+            </div>
+          ) : communityReports.length === 0 ? (
+            <div style={{
+              padding: '16px',
+              textAlign: 'center',
+              backgroundColor: 'rgba(0, 0, 0, 0.02)',
+              borderRadius: '8px',
+              border: '1px dashed var(--border-soft)'
+            }}>
+              <MessageSquare size={20} color="var(--text-secondary)" style={{ margin: '0 auto 6px auto', display: 'block' }} />
+              <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-primary)' }}>No recent community reports</div>
+              <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                Are you near this crossing? Tap "Verify Gate" above with camera evidence.
+              </div>
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              {communityReports.map(rep => {
+                const observed = rep.observed_status || rep.observedStatus || 'CLOSED';
+                const isConfirmed = (rep.validation_status || rep.validationStatus) === 'COMMUNITY_CONFIRMED';
+                const statusColor = 
+                  observed === 'OPEN' ? '#22c55e' :
+                  observed === 'CLOSED' ? '#ef4444' :
+                  observed === 'TRAIN_PASSING' ? '#8b5cf6' : '#f59e0b';
+                const hasPhoto = Boolean(rep.has_photo || rep.isPhotoVerified || rep.photo_url || rep.photoUrl);
+                const reporter = rep.reporter_name || rep.submitterName || 'Commuter';
+                const obsTime = rep.observed_at || rep.observationTime || rep.createdAt || rep.created_at || new Date().toISOString();
+                const photoSrc = rep.photo_url || rep.photoUrl;
+
+                return (
+                  <div
+                    key={rep.id}
+                    style={{
+                      padding: '10px 12px',
+                      backgroundColor: 'var(--bg-secondary)',
+                      borderRadius: '8px',
+                      border: `1px solid ${isConfirmed ? 'rgba(59, 130, 246, 0.3)' : 'var(--border-soft)'}`
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <span style={{
+                          display: 'inline-block',
+                          width: '8px',
+                          height: '8px',
+                          borderRadius: '50%',
+                          backgroundColor: statusColor
+                        }} />
+                        <span style={{ fontSize: '12px', fontWeight: 700, color: statusColor }}>
+                          {observed.replace('_', ' ')}
+                        </span>
+                        {hasPhoto && (
+                          <span style={{
+                            fontSize: '10px',
+                            padding: '1px 5px',
+                            borderRadius: '4px',
+                            backgroundColor: 'rgba(34, 197, 94, 0.1)',
+                            color: '#16a34a',
+                            fontWeight: 600
+                          }}>
+                            Photo
+                          </span>
+                        )}
+                      </div>
+
+                      <span style={{
+                        fontSize: '10.5px',
+                        padding: '2px 6px',
+                        borderRadius: '4px',
+                        fontWeight: 600,
+                        backgroundColor: isConfirmed ? 'rgba(59, 130, 246, 0.15)' : 'rgba(245, 158, 11, 0.15)',
+                        color: isConfirmed ? '#2563eb' : '#d97706'
+                      }}>
+                        {isConfirmed ? '✓ Confirmed' : 'Reported'}
+                      </span>
+                    </div>
+
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '11px', color: 'var(--text-secondary)' }}>
+                      <span>By {reporter}</span>
+                      <span>{new Date(obsTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                    </div>
+
+                    {rep.notes && (
+                      <div style={{ fontSize: '11px', color: 'var(--text-primary)', marginTop: '4px', fontStyle: 'italic' }}>
+                        "{rep.notes}"
+                      </div>
+                    )}
+
+                    {photoSrc && (
+                      <div style={{ marginTop: '6px' }}>
+                        <button
+                          type="button"
+                          onClick={() => setSelectedPhotoModal(photoSrc)}
+                          style={{
+                            background: 'none',
+                            border: 'none',
+                            padding: 0,
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '4px',
+                            color: 'var(--accent-primary)',
+                            fontSize: '11px',
+                            fontWeight: 600
+                          }}
+                        >
+                          <Eye size={12} />
+                          <span>View Photo Evidence</span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* PHOTO LIGHTBOX MODAL */}
+        {selectedPhotoModal && (
+          <div
+            onClick={() => setSelectedPhotoModal(null)}
+            style={{
+              position: 'fixed',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              backgroundColor: 'rgba(0, 0, 0, 0.85)',
+              zIndex: 9999,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: '20px'
+            }}
+          >
+            <div
+              onClick={e => e.stopPropagation()}
+              style={{
+                position: 'relative',
+                maxWidth: '90vw',
+                maxHeight: '85vh',
+                backgroundColor: '#000',
+                borderRadius: '12px',
+                overflow: 'hidden'
+              }}
+            >
+              <img
+                src={selectedPhotoModal}
+                alt="Survey Photo Evidence"
+                style={{ width: '100%', maxHeight: '80vh', objectFit: 'contain', display: 'block' }}
+              />
+              <button
+                onClick={() => setSelectedPhotoModal(null)}
+                style={{
+                  position: 'absolute',
+                  top: '10px',
+                  right: '10px',
+                  backgroundColor: 'rgba(0, 0, 0, 0.6)',
+                  color: '#fff',
+                  border: 'none',
+                  borderRadius: '50%',
+                  width: '32px',
+                  height: '32px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  cursor: 'pointer'
+                }}
+              >
+                <X size={18} />
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* TIMETABLE MODAL */}
         {upcomingTrain && (

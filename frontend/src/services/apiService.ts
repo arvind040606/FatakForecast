@@ -12,7 +12,9 @@ import {
   PlaceSearchResult,
   ProviderTelemetry,
   ConnectionLifecycleState,
-  ConnectionStateDetails
+  ConnectionStateDetails,
+  CommunityCrossingReport,
+  CrossingSurveyInput
 } from '../types';
 import {
   INITIAL_CROSSINGS,
@@ -486,17 +488,20 @@ class RailwayAPIService {
           headers: { 'Cache-Control': 'no-cache', 'Pragma': 'no-cache' }
         });
       } catch (err) {
-        // If baseUrl failed and is not already production URL, immediately retry with cloud production URL
-        if (baseUrl !== 'https://fatakforecast.vercel.app') {
-          baseUrl = 'https://fatakforecast.vercel.app';
-          try {
-            await nativeService.setBackendUrl(baseUrl);
-            const retrySignal = AbortSignal.timeout(6000);
-            liveRes = await fetch(`${baseUrl}/api/telemetry/live`, {
-              signal: retrySignal,
-              headers: { 'Cache-Control': 'no-cache', 'Pragma': 'no-cache' }
-            });
-          } catch (retryErr) {}
+        // If baseUrl failed and not running on local development loopback, probe working backend URL
+        const isLocalDev = typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+        if (!isLocalDev) {
+          const probed = await nativeService.probeWorkingBackendUrl();
+          if (probed && probed !== baseUrl) {
+            baseUrl = probed;
+            try {
+              const retrySignal = AbortSignal.timeout(6000);
+              liveRes = await fetch(`${baseUrl}/api/telemetry/live`, {
+                signal: retrySignal,
+                headers: { 'Cache-Control': 'no-cache', 'Pragma': 'no-cache' }
+              });
+            } catch (retryErr) {}
+          }
         }
       }
 
@@ -1083,6 +1088,168 @@ class RailwayAPIService {
         reason: 'Crossings mapped via OpenStreetMap; gate status model estimated.'
       }
     };
+  }
+
+  // ==========================================
+  // SUPABASE CROWDSOURCING & USER ONBOARDING
+  // ==========================================
+
+  private getAuthHeader(): Record<string, string> {
+    const prof = nativeService.getUserLocationProfile();
+    const token = prof?.supabaseToken || (typeof localStorage !== 'undefined' ? localStorage.getItem('fatak_supabase_token') : null);
+    if (token) {
+      return { 'Authorization': `Bearer ${token}` };
+    }
+    return {};
+  }
+
+  public async onboardUser(displayName: string, gpsConsent: boolean, lat?: number | null, lng?: number | null) {
+    const baseUrl = this.getBaseUrl();
+    const res = await fetch(`${baseUrl}/api/user/onboard`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ displayName, gpsConsent, lat, lng })
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Onboarding failed' }));
+      throw new Error(err.error || 'Onboarding failed');
+    }
+    const data = await res.json();
+    if (data.token && typeof localStorage !== 'undefined') {
+      localStorage.setItem('fatak_supabase_token', data.token);
+    }
+    return data;
+  }
+
+  public async getUserProfile() {
+    const baseUrl = this.getBaseUrl();
+    const res = await fetch(`${baseUrl}/api/user/profile`, {
+      headers: { ...this.getAuthHeader() }
+    });
+    if (!res.ok) return null;
+    return await res.json();
+  }
+
+  public async updateUserProfile(updates: { displayName?: string; gpsConsent?: boolean; lat?: number | null; lng?: number | null }) {
+    const baseUrl = this.getBaseUrl();
+    let authHeader = this.getAuthHeader();
+
+    // If no token is cached yet, automatically onboard first
+    if (!authHeader['Authorization']) {
+      try {
+        const onboarded = await this.onboardUser(
+          updates.displayName || 'Commuter',
+          updates.gpsConsent !== undefined ? updates.gpsConsent : true,
+          updates.lat,
+          updates.lng
+        );
+        if (onboarded && onboarded.token) {
+          authHeader = { 'Authorization': `Bearer ${onboarded.token}` };
+          const prof = nativeService.getUserLocationProfile();
+          if (prof) {
+            await nativeService.setUserLocationProfile({
+              ...prof,
+              displayName: updates.displayName || onboarded.profile?.display_name || prof.displayName,
+              gpsConsent: updates.gpsConsent !== undefined ? updates.gpsConsent : prof.gpsConsent,
+              userId: onboarded.user?.id || onboarded.profile?.user_id || prof.userId,
+              supabaseToken: onboarded.token
+            });
+          }
+          return onboarded;
+        }
+      } catch (e) {
+        console.warn('[API] Auto-onboard error during profile update:', e);
+      }
+    }
+
+    let res = await fetch(`${baseUrl}/api/user/profile`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...authHeader },
+      body: JSON.stringify(updates)
+    });
+
+    // If 401 Unauthorized, automatically re-onboard session and retry once
+    if (res.status === 401) {
+      try {
+        const onboarded = await this.onboardUser(
+          updates.displayName || 'Commuter',
+          updates.gpsConsent !== undefined ? updates.gpsConsent : true,
+          updates.lat,
+          updates.lng
+        );
+        if (onboarded && onboarded.token) {
+          authHeader = { 'Authorization': `Bearer ${onboarded.token}` };
+          const prof = nativeService.getUserLocationProfile();
+          if (prof) {
+            await nativeService.setUserLocationProfile({
+              ...prof,
+              displayName: updates.displayName || onboarded.profile?.display_name || prof.displayName,
+              gpsConsent: updates.gpsConsent !== undefined ? updates.gpsConsent : prof.gpsConsent,
+              userId: onboarded.user?.id || onboarded.profile?.user_id || prof.userId,
+              supabaseToken: onboarded.token
+            });
+          }
+          return onboarded;
+        }
+      } catch (e) {
+        console.warn('[API] Re-onboard error on 401:', e);
+      }
+    }
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Update failed' }));
+      throw new Error(err.error || 'Update failed');
+    }
+    return await res.json();
+  }
+
+  public async submitCrossingSurvey(surveyInput: CrossingSurveyInput) {
+    const baseUrl = this.getBaseUrl();
+    const res = await fetch(`${baseUrl}/api/surveys/submit`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...this.getAuthHeader() },
+      body: JSON.stringify(surveyInput)
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Survey submission failed' }));
+      throw new Error(err.error || 'Survey submission failed');
+    }
+    return await res.json();
+  }
+
+  public async getCrossingCommunityReports(crossingId: string): Promise<CommunityCrossingReport[]> {
+    try {
+      const baseUrl = this.getBaseUrl();
+      const res = await fetch(`${baseUrl}/api/surveys/crossing/${encodeURIComponent(crossingId)}`);
+      if (res.ok) {
+        const data = await res.json();
+        return Array.isArray(data.reports) ? data.reports : [];
+      }
+    } catch (e) {}
+    return [];
+  }
+
+  public async getUserSurveys(): Promise<any[]> {
+    try {
+      const baseUrl = this.getBaseUrl();
+      const res = await fetch(`${baseUrl}/api/surveys/user`, {
+        headers: { ...this.getAuthHeader() }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        return Array.isArray(data.reports) ? data.reports : [];
+      }
+    } catch (e) {}
+    return [];
+  }
+
+  public async getSurveyConfig() {
+    try {
+      const baseUrl = this.getBaseUrl();
+      const res = await fetch(`${baseUrl}/api/surveys/config`);
+      if (res.ok) return await res.json();
+    } catch (e) {}
+    return null;
   }
 }
 

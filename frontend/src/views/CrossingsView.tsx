@@ -48,7 +48,7 @@ export const CrossingsView: React.FC<CrossingsViewProps> = ({
   const [filterStatus, setFilterStatus] = useState<string>(initialFilter || 'ALL');
   const [filterVerification, setFilterVerification] = useState<string>('ALL');
   const [searchQuery, setSearchQuery] = useState('');
-  const [sortBy, setSortBy] = useState<'closure' | 'distance' | 'name' | 'id'>(userProfile ? 'distance' : 'closure');
+  const [sortBy, setSortBy] = useState<'closure' | 'distance' | 'name' | 'id'>('closure');
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'cards' | 'table'>('cards');
   const [favIds, setFavIds] = useState<string[]>(() => nativeService.getFavoriteCrossingIds());
@@ -108,15 +108,26 @@ export const CrossingsView: React.FC<CrossingsViewProps> = ({
   });
 
   const sorted = [...filtered].sort((a, b) => {
-    if (sortBy === 'name') return a.name.localeCompare(b.name);
+    if (sortBy === 'name') {
+      const nameDiff = a.name.localeCompare(b.name);
+      if (nameDiff !== 0) return nameDiff;
+      return a.id.localeCompare(b.id);
+    }
     if (sortBy === 'id') return a.id.localeCompare(b.id);
+    if (sortBy === 'distance' && userProfile) {
+      const distA = haversineDistanceMeters(userProfile.lat, userProfile.lng, a.lat, a.lng);
+      const distB = haversineDistanceMeters(userProfile.lat, userProfile.lng, b.lat, b.lng);
+      if (Math.abs(distA - distB) > 5) return distA - distB;
+      return a.name.localeCompare(b.name);
+    }
     
-    // Sort by closure urgency with strictly deterministic tie-breakers
+    // Sort by closure urgency with strictly deterministic, stable tie-breakers
     const getUrgencyScore = (c: RailwayCrossing): number => {
-      if (c.activeDrill || c.observedPhysicalGateState === 'CLOSED' || c.status === 'CLOSED' || c.status === 'CLOSURE_REPORTED') return 4;
-      if (c.status === 'CLOSURE_EXPECTED') return 3;
-      if (c.status === 'APPROACHING') return 2;
-      if (c.countdownAvailable && c.timeToNextClosureSec > 0 && c.timeToNextClosureSec <= 1800) return 1;
+      if (c.activeDrill || c.observedPhysicalGateState === 'CLOSED' || c.status === 'CLOSED' || c.status === 'CLOSURE_REPORTED') return 5;
+      if (c.status === 'CLOSURE_EXPECTED') return 4;
+      if (c.status === 'APPROACHING') return 3;
+      if (c.countdownAvailable && c.timeToNextClosureSec > 0) return 2;
+      if ((c as any).upcomingTrain || (c as any).corridorTrain) return 1;
       return 0;
     };
 
@@ -126,16 +137,16 @@ export const CrossingsView: React.FC<CrossingsViewProps> = ({
       return scoreB - scoreA; // Higher urgency on top
     }
 
-    // Within same closure urgency tier, sort by ETA / countdown if available
+    // Within same closure urgency tier, sort by anchored closure timestamp to prevent second-by-second jitter
     if (scoreA >= 1) {
-      const etaA = a.timeToNextClosureSec > 0 ? a.timeToNextClosureSec : 99999;
-      const etaB = b.timeToNextClosureSec > 0 ? b.timeToNextClosureSec : 99999;
-      if (Math.abs(etaA - etaB) > 5) {
-        return etaA - etaB;
+      const timeA = getAuthoritativeTargetEpoch(a, 'closure', now) || (a.estimatedGateClosingTime ? new Date(a.estimatedGateClosingTime).getTime() : 0);
+      const timeB = getAuthoritativeTargetEpoch(b, 'closure', now) || (b.estimatedGateClosingTime ? new Date(b.estimatedGateClosingTime).getTime() : 0);
+      if (timeA && timeB && timeA !== timeB) {
+        return timeA - timeB;
       }
     }
 
-    // Fully deterministic stable tie-breaker by name and permanent OSM ID
+    // Fully deterministic stable tie-breaker by name and permanent node ID
     const nameDiff = a.name.localeCompare(b.name);
     if (nameDiff !== 0) return nameDiff;
     return a.id.localeCompare(b.id);
@@ -195,7 +206,7 @@ export const CrossingsView: React.FC<CrossingsViewProps> = ({
                   backgroundColor: 'var(--status-open)',
                   boxShadow: '0 0 6px var(--status-open)'
                 }} />
-                LIVE TELEMETRY (RAILKIT ACTIVE)
+                LIVE TRAIN TRACKING
               </span>
             ) : connDetails.state === 'STALE' ? (
               <span style={{
@@ -217,7 +228,7 @@ export const CrossingsView: React.FC<CrossingsViewProps> = ({
                   borderRadius: '50%',
                   backgroundColor: 'var(--warning-amber)'
                 }} />
-                STALE TELEMETRY (&gt;15M OLD)
+                DELAYED UPDATE (&gt;15M OLD)
               </span>
             ) : connDetails.state === 'CONNECTING' ? (
               <span style={{
@@ -360,8 +371,9 @@ export const CrossingsView: React.FC<CrossingsViewProps> = ({
               boxShadow: 'var(--shadow-sm)'
             }}
           >
-            <option value="closure">Sort: Next Closure</option>
             <option value="name">Sort: Name (A-Z)</option>
+            <option value="closure">Sort: Next Closure</option>
+            {userProfile && <option value="distance">Sort: Nearest Distance</option>}
             <option value="id">Sort: Node ID</option>
           </select>
 
@@ -411,23 +423,6 @@ export const CrossingsView: React.FC<CrossingsViewProps> = ({
               <span style={{ fontSize: '11.5px', fontWeight: 600 }}>Table</span>
             </button>
           </div>
-        </div>
-      </div>
-
-      {/* GATE TELEMETRY TRANSPARENCY ADVISORY */}
-      <div className="panel" style={{
-        padding: '12px 18px',
-        marginBottom: '20px',
-        backgroundColor: 'var(--bg-surface)',
-        border: '1px solid var(--border-panel)',
-        display: 'flex',
-        alignItems: 'flex-start',
-        gap: '12px'
-      }}>
-        <Info size={17} color="var(--accent-primary)" style={{ flexShrink: 0, marginTop: '2px' }} />
-        <div style={{ fontSize: '12px', color: 'var(--text-secondary)', lineHeight: '1.5' }}>
-          <strong style={{ color: 'var(--accent-emphasis)' }}>Barrier Telemetry Notice:</strong>{' '}
-          Level crossing closure projections are calculated from approaching train kinematics along track geometry. Physical gate barrier sensor telemetry is uninstrumented; states reflect predictive kinematic forecasts, not mechanical latch confirmations.
         </div>
       </div>
 
@@ -675,7 +670,7 @@ export const CrossingsView: React.FC<CrossingsViewProps> = ({
                   {/* 4. When timing is unconfirmed / unavailable */}
                   {timing.isTimingUnavailable && !timing.activeTrain && (
                     <div style={{ fontSize: '11px', color: 'var(--text-muted)', lineHeight: '1.3' }}>
-                      Live permanent-way telemetry currently unconfirmed. Proceed with caution.
+                      Live track status is currently updating. Proceed with caution.
                     </div>
                   )}
 

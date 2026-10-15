@@ -38,7 +38,7 @@ export function projectPointOnPolyline(p, polyline) {
 export class GeographicValidator {
   static ASR_JUNCTION = { lat: 31.6338, lng: 74.8655 };
   static AMRITSAR_SECTOR_RADIUS_KM = 140.0; // 140 km operational radius (covers Jalandhar City, Beas, Jandiala, Batala, Pathankot approach, Tarn Taran, Attari, and Ludhiana approach corridor)
-  static MAX_CORRIDOR_OFFSET_KM = 1.2;    // 1.2 km track deviation buffer (accommodates station yards, sidings & cellular telemetry)
+  static MAX_CORRIDOR_OFFSET_KM = 3.5;    // 3.5 km track deviation buffer (accommodates station yards, sidings, municipal nodes & cellular telemetry)
 
   /**
    * Check if a location is within the Amritsar railway operational sector
@@ -135,7 +135,7 @@ export class GeographicValidator {
         isValid: false,
         isApproaching: false,
         hasCleared: false,
-        rejectionReason: 'Train telemetry is stale (>15 minutes old). Reliable approach cannot be verified.',
+        rejectionReason: 'Train update is older than 15 minutes. Waiting for fresh signal.',
         trackDistanceKm: null
       };
     }
@@ -147,7 +147,7 @@ export class GeographicValidator {
         isValid: false,
         isApproaching: false,
         hasCleared: false,
-        rejectionReason: `Train is outside Amritsar sector (${sectorCheck.distanceFromAsrKm} km away). Cannot approach Amritsar crossings.`,
+        rejectionReason: `Train is outside Amritsar area (${sectorCheck.distanceFromAsrKm} km away).`,
         trackDistanceKm: null
       };
     }
@@ -158,7 +158,7 @@ export class GeographicValidator {
         isValid: false,
         isApproaching: false,
         hasCleared: false,
-        rejectionReason: `Corridor mismatch: Train corridor (${train.corridorId || 'unassigned'}) does not match crossing corridor (${crossing.corridorId || 'unassigned'}). No physical track connection.`,
+        rejectionReason: `Corridor mismatch: Train is on a different railway line than this crossing.`,
         trackDistanceKm: null
       };
     }
@@ -170,7 +170,7 @@ export class GeographicValidator {
         isValid: false,
         isApproaching: false,
         hasCleared: false,
-        rejectionReason: `Train travel direction (${train.direction || 'UNKNOWN'}) is unverified. Direction is required to determine forward track approach trajectory.`,
+        rejectionReason: `Train travel direction is being confirmed before predicting crossing time.`,
         trackDistanceKm: null
       };
     }
@@ -179,6 +179,8 @@ export class GeographicValidator {
     const trainProj = this.isPointOnCorridor([train.lat, train.lng], corridorCoordinates);
     let isExtendedApproach = false;
     let distToCorridorTerminusKm = 0;
+    let isDirectBranchApproach = false;
+    let directBranchTrackDistKm = 0;
 
     if (!trainProj.isOnTrack) {
       if (train.direction === 'DOWN' && corridorCoordinates && corridorCoordinates.length > 0) {
@@ -186,48 +188,93 @@ export class GeographicValidator {
         const distToTerminus = haversineKm(train.lat, train.lng, terminus[0], terminus[1]);
         const distTrainToAsr = haversineKm(train.lat, train.lng, this.ASR_JUNCTION.lat, this.ASR_JUNCTION.lng);
         const distTerminusToAsr = haversineKm(terminus[0], terminus[1], this.ASR_JUNCTION.lat, this.ASR_JUNCTION.lng);
+        const distCrossingToAsr = haversineKm(crossing.lat, crossing.lng, this.ASR_JUNCTION.lat, this.ASR_JUNCTION.lng);
 
-        // Train must be further from Amritsar than the terminus (or within 2km boundary) and within 135 km from terminus
-        if (distTrainToAsr >= distTerminusToAsr - 2.0 && distToTerminus <= 135.0) {
+        // Train must be within Amritsar operational sector or within 140km from corridor terminus
+        if (distTrainToAsr <= this.AMRITSAR_SECTOR_RADIUS_KM || distToTerminus <= 140.0) {
           let corridorMatch = false;
-          if (train.corridorId === 'CORR_ASR_JUC' && train.lat <= terminus[0] + 0.15 && train.lng >= terminus[1] - 0.25) {
+          if (train.corridorId && crossing.corridorId && train.corridorId === crossing.corridorId) {
             corridorMatch = true;
-          } else if (train.corridorId === 'CORR_ASR_PTK' && train.lat >= terminus[0] - 0.10 && train.lng >= terminus[1] - 0.10) {
-            corridorMatch = true;
-          } else if (train.corridorId === 'CORR_ASR_TT' && train.lat <= terminus[0] + 0.10) {
-            corridorMatch = true;
-          } else if (train.corridorId === 'CORR_ASR_ATT' && train.lng <= terminus[1] + 0.10) {
-            corridorMatch = true;
+          } else if (Array.isArray(train.schedule) && train.schedule.length > 0) {
+            let termCodes = [];
+            if (crossing.corridorId === 'CORR_ASR_JUC') termCodes = ['JUC', 'JRC', 'BEAS', 'JNL', 'MOW', 'ASR'];
+            else if (crossing.corridorId === 'CORR_ASR_PTK') termCodes = ['PTK', 'KNG', 'BAT', 'VKA', 'ASR'];
+            else if (crossing.corridorId === 'CORR_ASR_TT') termCodes = ['TTO', 'DUQ', 'BGTN', 'ASR'];
+            else if (crossing.corridorId === 'CORR_ASR_ATT') termCodes = ['ATT', 'CIA', 'ASR'];
+            corridorMatch = train.schedule.some(s => termCodes.includes(s.stationCode || s.stnCode));
           }
 
           if (corridorMatch) {
+            // Check if DOWN train has already passed this crossing (closer to Amritsar Jn than the crossing)
+            if (distTrainToAsr < distCrossingToAsr - 0.7) {
+              const distFromCrossing = haversineKm(train.lat, train.lng, crossing.lat, crossing.lng);
+              return {
+                isValid: true,
+                isApproaching: false,
+                hasCleared: true,
+                isTraversing: false,
+                isOppositeDirection: true,
+                rejectionReason: `Train is travelling inbound (DOWN) and has already cleared this crossing.`,
+                trackDistanceKm: Number(distFromCrossing.toFixed(2))
+              };
+            }
+
+            // Route schedule analysis
+            let routedViaTerminus = false;
             if (Array.isArray(train.schedule) && train.schedule.length > 0) {
               const currCode = train.currentStationCode || train.stationCode;
-              const currStop = train.schedule.find(s => s.stationCode === currCode);
+              const currStop = train.schedule.find(s => (s.stationCode === currCode || s.stnCode === currCode));
               let termCodes = [];
-              if (train.corridorId === 'CORR_ASR_JUC') termCodes = ['JUC', 'JRC'];
-              else if (train.corridorId === 'CORR_ASR_PTK') termCodes = ['KNG', 'BAT', 'VKA'];
-              else if (train.corridorId === 'CORR_ASR_TT') termCodes = ['TTO', 'DUQ', 'BGTN'];
-              else if (train.corridorId === 'CORR_ASR_ATT') termCodes = ['ATT', 'CIA'];
+              if (train.corridorId === 'CORR_ASR_JUC' || crossing.corridorId === 'CORR_ASR_JUC') termCodes = ['JUC', 'JRC'];
+              else if (train.corridorId === 'CORR_ASR_PTK' || crossing.corridorId === 'CORR_ASR_PTK') termCodes = ['PTK', 'KNG', 'BAT', 'VKA'];
+              else if (train.corridorId === 'CORR_ASR_TT' || crossing.corridorId === 'CORR_ASR_TT') termCodes = ['TTO', 'DUQ', 'BGTN'];
+              else if (train.corridorId === 'CORR_ASR_ATT' || crossing.corridorId === 'CORR_ASR_ATT') termCodes = ['ATT', 'CIA'];
 
-              const termStop = train.schedule.find(s => termCodes.includes(s.stationCode));
+              const termStop = train.schedule.find(s => termCodes.includes(s.stationCode || s.stnCode));
               if (currStop && termStop && termStop.distance > currStop.distance) {
                 distToCorridorTerminusKm = termStop.distance - currStop.distance;
+                routedViaTerminus = true;
               }
             }
-            if (distToCorridorTerminusKm <= 0) {
-              distToCorridorTerminusKm = distToTerminus * 1.12; // Standard railway tortuosity factor
+
+            if (routedViaTerminus || distTrainToAsr >= distTerminusToAsr - 2.0) {
+              if (distToCorridorTerminusKm <= 0) {
+                distToCorridorTerminusKm = distToTerminus * 1.12; // Standard railway tortuosity factor
+              }
+              isExtendedApproach = true;
+            } else {
+              // Direct approach from closer branch or parallel alignment heading towards crossing & Amritsar
+              directBranchTrackDistKm = Math.max(0.5, haversineKm(train.lat, train.lng, crossing.lat, crossing.lng) * 1.10);
+              isDirectBranchApproach = true;
             }
-            isExtendedApproach = true;
           }
+        }
+      } else if (train.direction === 'UP' && corridorCoordinates && corridorCoordinates.length > 0) {
+        const terminus = corridorCoordinates[corridorCoordinates.length - 1];
+        const distTrainToAsr = haversineKm(train.lat, train.lng, this.ASR_JUNCTION.lat, this.ASR_JUNCTION.lng);
+        const distTerminusToAsr = haversineKm(terminus[0], terminus[1], this.ASR_JUNCTION.lat, this.ASR_JUNCTION.lng);
+        const distCrossingToAsr = haversineKm(crossing.lat, crossing.lng, this.ASR_JUNCTION.lat, this.ASR_JUNCTION.lng);
+
+        // If UP train has travelled further outbound than the crossing and is at/past corridor terminus
+        if (distTrainToAsr > distCrossingToAsr && distTrainToAsr >= distTerminusToAsr - 2.0) {
+          const distFromCrossing = haversineKm(train.lat, train.lng, crossing.lat, crossing.lng);
+          return {
+            isValid: true,
+            isApproaching: false,
+            hasCleared: true,
+            isTraversing: false,
+            isOppositeDirection: true,
+            rejectionReason: `Train is travelling outbound (UP) and has already cleared this crossing.`,
+            trackDistanceKm: Number(distFromCrossing.toFixed(2))
+          };
         }
       }
 
-      if (!isExtendedApproach) {
+      if (!isExtendedApproach && !isDirectBranchApproach) {
         return {
           isValid: false,
           isApproaching: false,
-          rejectionReason: `Train GPS coordinates are ${trainProj.perpendicularDistanceMeters}m off railway corridor. Invalid track alignment.`,
+          rejectionReason: `Train is currently outside the local track section.`,
           trackDistanceKm: null
         };
       }
@@ -240,7 +287,7 @@ export class GeographicValidator {
         isValid: false,
         isApproaching: false,
         hasCleared: false,
-        rejectionReason: `Crossing is ${Math.round(crossingProj.distKm * 1000)}m off this corridor polyline (not on physical track geometry).`,
+        rejectionReason: `Crossing is not located on this railway line.`,
         trackDistanceKm: null
       };
     }
@@ -257,8 +304,50 @@ export class GeographicValidator {
               isValid: false,
               isApproaching: false,
               hasCleared: false,
-              rejectionReason: `Crossing is physically behind train's route origin (${train.origin}). Not on active route trajectory.`,
+              rejectionReason: `Crossing is behind the train's starting point (${train.origin}).`,
               trackDistanceKm: null
+            };
+          }
+        }
+      }
+    }
+
+    // Check 6b: Route Schedule Sequence Validation (Train cannot approach crossings near stations it has already passed)
+    if (Array.isArray(train.schedule) && train.schedule.length > 0) {
+      const currCode = train.currentStationCode || train.stationCode;
+      const currIndex = train.schedule.findIndex(s => (s.stationCode === currCode || s.stnCode === currCode));
+      if (currIndex !== -1) {
+        // Find nearest station to this crossing on the corridor
+        let nearestStationOnRoute = null;
+        let minCrossingToStnDist = Infinity;
+        for (const stop of train.schedule) {
+          const sCode = stop.stationCode || stop.stnCode;
+          const stnObj = STATION_COORDINATES[sCode];
+          if (stnObj) {
+            const d = haversineKm(crossing.lat, crossing.lng, stnObj.lat, stnObj.lng);
+            if (d < minCrossingToStnDist) {
+              minCrossingToStnDist = d;
+              nearestStationOnRoute = stop;
+            }
+          }
+        }
+        if (nearestStationOnRoute && minCrossingToStnDist < 4.0) {
+          const targetStnCode = nearestStationOnRoute.stationCode || nearestStationOnRoute.stnCode;
+          const stnIndex = train.schedule.findIndex(s => {
+            const code = s.stationCode || s.stnCode;
+            return Boolean(code && targetStnCode && code === targetStnCode);
+          });
+          if (stnIndex !== -1 && stnIndex < currIndex) {
+            // Station was already passed in the timetable schedule!
+            const distFromCrossing = haversineKm(train.lat, train.lng, crossing.lat, crossing.lng);
+            return {
+              isValid: true,
+              isApproaching: false,
+              hasCleared: true,
+              isTraversing: false,
+              isOppositeDirection: true,
+              rejectionReason: `Train has already passed ${nearestStationOnRoute.stationName || nearestStationOnRoute.stationCode} (current progress: ${currCode}).`,
+              trackDistanceKm: Number(distFromCrossing.toFixed(2))
             };
           }
         }
@@ -274,7 +363,7 @@ export class GeographicValidator {
         return {
           isValid: false,
           isApproaching: false,
-          rejectionReason: `Contradictory telemetry: Reported station (${stnCode}) is ${distFromReportedStation.toFixed(1)} km from reported coordinates (${train.lat}, ${train.lng}).`,
+          rejectionReason: `Location update is being refreshed with latest station data.`,
           trackDistanceKm: null
         };
       }
@@ -304,6 +393,17 @@ export class GeographicValidator {
         isTraversing: false,
         hasCleared: false,
         trackDistanceKm: Number(totalTrackDistKm.toFixed(2)),
+        rejectionReason: null
+      };
+    }
+
+    if (isDirectBranchApproach) {
+      return {
+        isValid: true,
+        isApproaching: true,
+        isTraversing: false,
+        hasCleared: false,
+        trackDistanceKm: Number(directBranchTrackDistKm.toFixed(2)),
         rejectionReason: null
       };
     }

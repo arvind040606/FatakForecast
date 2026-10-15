@@ -686,7 +686,11 @@ export interface CommuteAlarmDepartureEstimate {
 export type LocationSource = 'GPS_HARDWARE' | 'MANUAL_ENTRY' | 'APPROXIMATE_IP';
 
 export interface UserLocationProfile {
+  userId?: string;
   userName?: string;
+  displayName?: string;
+  supabaseToken?: string;
+  gpsConsent?: boolean;
   lat: number;
   lng: number;
   locationName: string;
@@ -705,3 +709,46 @@ export interface NearbyCrossingItem {
 }
 
 export type ThemeMode = 'dark' | 'light' | 'system';
+
+export type CrossingObservedStatus = 'OPEN' | 'CLOSED' | 'TRAIN_PASSING' | 'GATE_REOPENING';
+export type SurveyValidationStatus = 'PENDING' | 'APPROVED' | 'REJECTED' | 'FLAGGED' | 'COMMUNITY_CONFIRMED';
+
+export interface CommunityCrossingReport {
+  id: string;
+  crossingId?: string;
+  crossing_id?: string;
+  crossingName?: string;
+  observedStatus?: CrossingObservedStatus;
+  observed_status?: CrossingObservedStatus;
+  observationTime?: string;
+  observed_at?: string;
+  waitingDurationSec?: number | null;
+  waiting_duration_sec?: number | null;
+  notes?: string | null;
+  isPhotoVerified?: boolean;
+  has_photo?: boolean;
+  photoUrl?: string | null;
+  photo_url?: string | null;
+  captureSource?: 'CAMERA_LIVE' | 'GALLERY_UPLOAD' | 'NO_PHOTO';
+  capture_source?: 'CAMERA_LIVE' | 'GALLERY_UPLOAD' | 'NO_PHOTO';
+  validationStatus?: SurveyValidationStatus;
+  validation_status?: SurveyValidationStatus;
+  submitterName?: string;
+  reporter_name?: string;
+  distanceMeters?: number | null;
+  distance_meters?: number | null;
+  createdAt?: string;
+  created_at?: string;
+}
+
+export interface CrossingSurveyInput {
+  crossingId: string;
+  observedStatus: CrossingObservedStatus;
+  observationTime?: string;
+  waitingDurationSec?: number;
+  notes?: string;
+  photoBase64?: string;
+  captureSource: 'CAMERA_LIVE' | 'GALLERY_UPLOAD' | 'NO_PHOTO';
+  submitterLat?: number | null;
+  submitterLng?: number | null;
+}

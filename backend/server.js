@@ -19,6 +19,7 @@ import { ipstackService } from './ipstackService.js';
 import { savedPlacesManager } from './savedPlacesManager.js';
 import { geocodingService } from './geocodingService.js';
 import { geminiIntelligenceService } from './geminiIntelligenceService.js';
+import { createSupabaseRouter } from './supabaseService.js';
 
 const app = express();
 const server = http.createServer(app);
@@ -46,7 +47,19 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use(express.json());
+// Guarantee live, non-cached fresh telemetry across all API routes
+app.use('/api', (req, res, next) => {
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate, max-age=0');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  next();
+});
+
+app.use(express.json({ limit: '15mb' }));
+app.use(express.urlencoded({ extended: true, limit: '15mb' }));
+
+// Isolated Supabase Community Crowdsourcing & User Surveys API
+app.use('/api', createSupabaseRouter());
 
 // Load local .env if present without exposing to client
 if (fs.existsSync(path.join(__dirname, '.env'))) {
@@ -269,24 +282,49 @@ function saveCrossingAnchors() {
 
 const SNAPSHOT_CACHE_PATH = path.join(process.env.TEMP || '/tmp', 'fatak_telemetry_snapshot.json');
 
+let REGISTERED_TIMETABLE_TRAINS = [];
+try {
+  const fallbackPath = path.join(__dirname, 'telemetry_fallback_snapshot.json');
+  if (fs.existsSync(fallbackPath)) {
+    const raw = fs.readFileSync(fallbackPath, 'utf8');
+    const parsed = JSON.parse(raw);
+    if (parsed && Array.isArray(parsed.trains)) {
+      REGISTERED_TIMETABLE_TRAINS = parsed.trains;
+    }
+  }
+} catch (e) {}
+
 function applySnapshotData(data) {
   const now = Date.now();
   const isoNow = new Date().toISOString();
   if (data && Array.isArray(data.trains) && data.trains.length > 0) {
     TRAINS = data.trains;
     data.trains.forEach(t => {
-      // Keep heartbeat fresh so serverless cold starts never trigger false >15m staleness
-      t.lastPing = isoNow;
-      t.providerObservationTimestamp = isoNow;
-      t.apiRetrievalTimestamp = isoNow;
-      t.isStale = false;
+      const snapTime = t.providerObservationTimestamp || data.timestamp || null;
+      t.providerObservationTimestamp = snapTime;
+      t.apiRetrievalTimestamp = snapTime;
+      t.lastPing = t.lastPing || snapTime;
+      const ageMs = snapTime ? (Date.now() - new Date(snapTime).getTime()) : Infinity;
+      t.isStale = isNaN(ageMs) || ageMs > 15 * 60 * 1000;
+      if (t.isStale && t.dataState === 'LIVE') {
+        t.dataState = 'STALE';
+      }
+      if (t.status === 'OUT_OF_SECTOR' || t.isWithinAmritsarSector === false) {
+        t.isWithinAmritsarSector = false;
+        if (t.status !== 'NOT_STARTED' && t.status !== 'TERMINATED' && t.status !== 'CANCELLED') {
+          t.status = 'OUT_OF_SECTOR';
+        }
+      }
       const num = trainAggregationService.normalizeTrainNumber(t.trainNumber || t.number || t.id);
       if (num) {
         trainAggregationService.aggregatedTrainsMap.set(num, t);
         railkitService.validatedTrainsMap.set(num, t);
       }
     });
-    trainAggregationService.lastAggregateTimestamp = isoNow;
+    // Keep lastAggregateTimestamp as null if from fallback snapshot so live sync triggers immediately
+    if (data.isLiveAggregate && !data.isFallback) {
+      trainAggregationService.lastAggregateTimestamp = data.timestamp || null;
+    }
     if (Array.isArray(data.crossings) && data.crossings.length > 0) {
       data.crossings.forEach(sc => {
         const match = CROSSINGS.find(c => c.id === sc.id);
@@ -326,9 +364,18 @@ function loadTelemetrySnapshot() {
       return false;
     };
 
-    // 1. Try temp cache first
-    loaded = tryApply(SNAPSHOT_CACHE_PATH);
-    // 2. If absent or empty, always load bundled fallback snapshot
+    // 1. Try temp cache first (only if younger than 10 minutes)
+    if (fs.existsSync(SNAPSHOT_CACHE_PATH)) {
+      try {
+        const stats = fs.statSync(SNAPSHOT_CACHE_PATH);
+        if (Date.now() - stats.mtimeMs < 10 * 60 * 1000) {
+          loaded = tryApply(SNAPSHOT_CACHE_PATH);
+        } else {
+          try { fs.unlinkSync(SNAPSHOT_CACHE_PATH); } catch (e) {}
+        }
+      } catch (e) {}
+    }
+    // 2. If absent or empty, load bundled fallback snapshot
     if (!loaded) {
       const fallbackPath = path.join(__dirname, 'telemetry_fallback_snapshot.json');
       tryApply(fallbackPath);
@@ -602,9 +649,12 @@ function updateKinematics() {
 
   // 1. Sync trains from authentic telemetry aggregation service (RailKit SDK)
   const activeTrains = trainAggregationService.getAggregatedTrainsList();
-  if (activeTrains.length > 0) {
-    TRAINS = activeTrains;
-  }
+  const mergedMap = new Map();
+  // Retain scheduled/timetable trains (e.g. 12014 Shatabdi, 74688 DMU)
+  REGISTERED_TIMETABLE_TRAINS.forEach(t => mergedMap.set(t.number, { ...t }));
+  // Overlay genuine live telemetry discovered from RailKit SDK
+  activeTrains.forEach(t => mergedMap.set(t.number, t));
+  TRAINS = Array.from(mergedMap.values());
   const trainsToProcess = TRAINS;
 
   // Advance only genuine, active in-transit trains along their permanent-way OSM corridor coordinates
@@ -682,8 +732,9 @@ function updateKinematics() {
       }
     }
 
-    // In-transit trains advance along authentic permanent-way polyline
+    // In-transit trains advance along authentic permanent-way polyline ONLY in DEMO_SIMULATION mode
     if (
+      isDemoMode &&
       !train.isStale &&
       effectiveSpeedKmH > 0 &&
       train.status === 'IN_TRANSIT' &&
@@ -694,7 +745,7 @@ function updateKinematics() {
       const corridor = RAILWAY_CORRIDORS[train.corridorId];
       const coords = corridor.coordinates;
       if (coords && coords.length >= 2) {
-        // In TICK_INTERVAL_SEC (1 second), train travels along true permanent-way polyline
+        // In TICK_INTERVAL_SEC (1 second), train travels along true permanent-way polyline in simulation
         const distKm = (effectiveSpeedKmH / 3600) * TICK_INTERVAL_SEC;
         const maxIdx = coords.length - 1;
 
@@ -713,7 +764,7 @@ function updateKinematics() {
 
         train.currentCoordIndex = advanceAlongCoordinates(coords, train.currentCoordIndex, distKm, train.direction);
 
-        // Turnaround when reaching terminus along corridor to maintain continuous realistic operational loop
+        // Corridor boundary handling in demo simulation
         if (train.direction === 'UP' && train.currentCoordIndex >= maxIdx) {
           train.direction = 'DOWN';
           train.currentCoordIndex = maxIdx;
@@ -733,10 +784,23 @@ function updateKinematics() {
         train.lastPing = new Date().toISOString();
         train.isStale = false;
         if (!train.positionClassification || train.positionClassification === 'UNKNOWN' || train.positionClassification === 'SCHEDULED_POSITION') {
-          train.positionClassification = 'INTERPOLATED_POSITION';
-          train.observationAccuracy = 'OSM_PERMANENT_WAY_KINEMATICS';
+          train.positionClassification = 'SIMULATED_POSITION';
+          train.observationAccuracy = 'SIMULATION_BENCH';
         }
-
+      }
+    } else if (!isDemoMode) {
+      // LIVE_OPERATIONAL mode: Genuine observations only — NEVER invent or simulate coordinates.
+      // Honest staleness calculation based on authentic provider observation timestamp
+      const effectiveObs = train.providerObservationTimestamp || train.apiRetrievalTimestamp || train.lastPing;
+      if (effectiveObs) {
+        const obsMs = new Date(effectiveObs).getTime();
+        const ageMs = !isNaN(obsMs) ? (Date.now() - obsMs) : Infinity;
+        if (ageMs > 15 * 60 * 1000) {
+          train.isStale = true;
+          if (train.dataState === 'LIVE') {
+            train.dataState = 'STALE';
+          }
+        }
       }
     }
 
@@ -778,9 +842,7 @@ function updateKinematics() {
     }
   }
 
-  if (activeTrains.length > 0) {
-    TRAINS = activeTrains;
-  }
+  // Ensure sectional speed calibration on merged TRAINS
   TRAINS.forEach(train => {
     const tNum = String(train.trainNumber || train.id || '');
     if (!train.sectionalSpeedKmH || typeof train.sectionalSpeedKmH !== 'number') {
@@ -800,28 +862,46 @@ function updateKinematics() {
   // 2. Dynamic Speed-and-Time Gate Dynamics Engine (with Strict Geographic Validation)
   const diag = trainAggregationService.getDiagnostics();
   const rkStatus = railkitService.getStatus();
-  const lastSyncTime = diag.lastAggregateTimestamp || rkStatus.lastSuccessfulSync;
+  const rrStatus = railRadarService.getStatus();
+  const lastSyncTime = diag.lastAggregateTimestamp || rkStatus.lastSuccessfulSync || rrStatus.lastSuccessfulSync;
   const isSyncRecent = Boolean(lastSyncTime && (Date.now() - new Date(lastSyncTime).getTime() < 15 * 60 * 1000));
-  const isProviderConfigured = Boolean(rkStatus.configured || railRadarService.getStatus().configured);
-  const isCircuitBreakerOpen = rkStatus.circuitBreaker?.state === 'OPEN';
-  const isFeedActive = Boolean(
-    diag.overallStatus?.startsWith('CONNECTED') || 
-    rkStatus.status === 'CONNECTED' || 
-    rkStatus.status === 'READY' || 
-    (isProviderConfigured && !isCircuitBreakerOpen) || 
-    isSyncRecent
-  );
-  const isFeedFresh = isSyncRecent || isFeedActive;
+  const isProviderConfigured = Boolean(rkStatus.configured || rrStatus.configured);
+  const isCircuitBreakerOpen = (rkStatus.circuitBreaker?.state === 'OPEN') && (rrStatus.circuitBreaker?.state === 'OPEN' || !rrStatus.configured);
+
+  const isFeedFresh = isSyncRecent;
+  let feedStatus = 'DISCONNECTED';
+  if (isCircuitBreakerOpen) {
+    feedStatus = 'CIRCUIT_BREAKER_OPEN';
+  } else if (isSyncRecent) {
+    feedStatus = 'CONNECTED';
+  } else if (isProviderConfigured) {
+    feedStatus = (rkStatus.status === 'ERROR' || rrStatus.status === 'ERROR') ? 'ERROR' : 'CONNECTING';
+  }
+
   const feedContext = {
     isFeedFresh,
-    feedStatus: (isFeedActive || isFeedFresh) ? 'CONNECTED' : 'DISCONNECTED',
-    lastSuccessfulSync: lastSyncTime || new Date().toISOString(),
-    apiConfirmsCorridorClear: Boolean(isFeedFresh)
+    feedStatus,
+    lastSuccessfulSync: lastSyncTime || null,
+    apiConfirmsCorridorClear: Boolean(isFeedFresh && (rkStatus.status === 'CONNECTED' || diag.overallStatus?.startsWith('CONNECTED')))
   };
 
   CROSSINGS.forEach(crossing => {
     const corridor = RAILWAY_CORRIDORS[crossing.corridorId];
-    const relevantTrains = TRAINS.filter(t => t.corridorId === crossing.corridorId && !t.isStale);
+    const relevantTrains = TRAINS.filter(t => 
+      t.corridorId === crossing.corridorId && 
+      !t.isStale && 
+      t.dataState !== 'STALE' &&
+      t.status !== 'OUT_OF_SECTOR' &&
+      t.status !== 'CANCELLED' &&
+      t.status !== 'TERMINATED' &&
+      t.status !== 'NOT_STARTED' &&
+      t.isWithinAmritsarSector !== false &&
+      typeof t.lat === 'number' &&
+      typeof t.lng === 'number' &&
+      t.lat !== 0 &&
+      t.lng !== 0 &&
+      (typeof t.distanceFromAmritsarKm !== 'number' || t.distanceFromAmritsarKm <= GeographicValidator.AMRITSAR_SECTOR_RADIUS_KM)
+    );
 
     if (!corridor) return;
 
@@ -888,8 +968,8 @@ function updateKinematics() {
     }
     crossing.upcomingTrain = evaluation.upcomingTrain || null;
     crossing.primaryTrain = evaluation.primaryTrain || evaluation.upcomingTrain || null;
-    crossing.corridorTrain = evaluation.corridorTrain || (relevantTrains.length > 0 ? relevantTrains[0] : null);
-    crossing.activeCorridorTrain = evaluation.activeCorridorTrain || crossing.corridorTrain || null;
+    crossing.corridorTrain = evaluation.corridorTrain || null;
+    crossing.activeCorridorTrain = evaluation.activeCorridorTrain || null;
     crossing.upcomingTrains = evaluation.upcomingTrains || [];
     crossing.subsequentTrains = evaluation.subsequentTrains || [];
     crossing.totalUpcomingTrains = evaluation.totalUpcomingTrains || (evaluation.upcomingTrain ? 1 : 0);

@@ -33,13 +33,13 @@ export const DrillModal: React.FC<DrillModalProps> = ({
 
     if (action === 'CLOSE_NOW') {
       railwayApi.playAudioChime('CLOSED');
-      setFeedbackMessage(`Barrier closure simulated on ${selectedId}. Red alert state broadcasted.`);
+      setFeedbackMessage('Barrier closure simulated. Closed warning alert broadcasted.');
     } else if (action === 'APPROACH_NOW') {
       railwayApi.playAudioChime('APPROACH');
-      setFeedbackMessage(`Approach circuit triggered on ${selectedId}. Warning annunciators active.`);
+      setFeedbackMessage('Train approach simulated. Approach warning active.');
     } else {
       railwayApi.playAudioChime('OPEN');
-      setFeedbackMessage(`Gates raised and interlocks cleared on ${selectedId}. Safe passage restored.`);
+      setFeedbackMessage('Gates opened and tracks cleared. Safe passage restored.');
     }
   };
 
@@ -75,10 +75,10 @@ export const DrillModal: React.FC<DrillModalProps> = ({
         }}>
           <div>
             <h3 style={{ fontSize: '15px', fontWeight: 700, color: 'var(--color-primary-dark)', margin: 0 }}>
-              Operational Drill Simulator
+              Crossing Alert Simulator
             </h3>
             <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '2px' }}>
-              Test live crossing signals, countdowns &amp; audio chimes
+              Test live crossing alerts, countdowns &amp; audio chimes
             </div>
           </div>
 
@@ -172,7 +172,7 @@ export const DrillModal: React.FC<DrillModalProps> = ({
               }}
             >
               <ShieldAlert size={16} />
-              <span>Simulate Gate Closure (Lock Barriers)</span>
+              <span>Simulate Gate Closure (Gates Closed)</span>
             </button>
 
             <button
@@ -190,7 +190,7 @@ export const DrillModal: React.FC<DrillModalProps> = ({
               }}
             >
               <CheckCircle2 size={16} />
-              <span>Clear Track &amp; Reopen Gate (All Clear)</span>
+              <span>Clear Track &amp; Reopen Gate (Safe to Cross)</span>
             </button>
           </div>
         </div>

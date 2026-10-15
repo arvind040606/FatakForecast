@@ -23,7 +23,11 @@ import {
   Smartphone,
   Train,
   BarChart3,
-  ChevronRight
+  ChevronRight,
+  User,
+  Save,
+  FileText,
+  CheckCircle2
 } from 'lucide-react';
 import { TravelMode, ActiveRoute, ThemeMode } from '../types';
 import { nativeService } from '../services/nativeService';
@@ -50,6 +54,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onNavigate }) => {
 
   // Clear data confirmation
   const [dataCleared, setDataCleared] = useState<boolean>(false);
+
+  // User Profile & Supabase Crowdsourcing
+  const [userProfile, setUserProfile] = useState(() => nativeService.getUserLocationProfile());
+  const [displayName, setDisplayName] = useState(userProfile?.displayName || '');
+  const [gpsConsent, setGpsConsent] = useState(Boolean(userProfile?.gpsConsent));
+  const [isSavingProfile, setIsSavingProfile] = useState(false);
+  const [profileSaveMsg, setProfileSaveMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   useEffect(() => {
     setThemeMode(nativeService.getThemePreference());
@@ -138,6 +149,79 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onNavigate }) => {
     const granted = await nativeService.requestNotificationPermission();
     setNotifPerm(granted ? 'granted' : 'denied');
     nativeService.triggerHaptic(granted ? 'success' : 'warning');
+  };
+
+  const handleSaveProfile = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    const cleanName = displayName.trim();
+    if (!cleanName) return;
+    setIsSavingProfile(true);
+    setProfileSaveMsg(null);
+
+    // 1. Immediately persist locally so name is never lost
+    const currentProf = userProfile || nativeService.getUserLocationProfile() || {
+      lat: 31.634,
+      lng: 74.872,
+      locationName: 'Amritsar',
+      source: 'MANUAL_ENTRY' as const,
+      isApproximate: true,
+      updatedAt: new Date().toISOString()
+    };
+    const locallyUpdated = {
+      ...currentProf,
+      displayName: cleanName,
+      gpsConsent
+    };
+    await nativeService.setUserLocationProfile(locallyUpdated as any);
+    setUserProfile(locallyUpdated as any);
+
+    try {
+      // 2. Sync to Supabase backend
+      const res = await railwayApi.updateUserProfile({
+        displayName: cleanName,
+        gpsConsent
+      });
+      if (res && res.success) {
+        const cloudUpdated = {
+          ...locallyUpdated,
+          displayName: res.profile?.display_name || res.user?.display_name || cleanName,
+          gpsConsent: res.profile?.gps_consent_granted !== undefined ? res.profile.gps_consent_granted : gpsConsent,
+          userId: res.profile?.user_id || res.user?.id || locallyUpdated.userId,
+          supabaseToken: res.token || locallyUpdated.supabaseToken
+        };
+        await nativeService.setUserLocationProfile(cloudUpdated as any);
+        setUserProfile(cloudUpdated as any);
+        setProfileSaveMsg({ type: 'success', text: 'Name & profile saved successfully' });
+        nativeService.triggerHaptic('success');
+      } else {
+        setProfileSaveMsg({ type: 'success', text: 'Name saved successfully' });
+      }
+    } catch (err: any) {
+      // Even if cloud sync has an issue, local name was safely saved!
+      setProfileSaveMsg({ type: 'success', text: 'Name saved locally' });
+      nativeService.triggerHaptic('light');
+    } finally {
+      setIsSavingProfile(false);
+      setTimeout(() => setProfileSaveMsg(null), 3500);
+    }
+  };
+
+  const handleToggleGpsConsent = async () => {
+    const nextConsent = !gpsConsent;
+    setGpsConsent(nextConsent);
+    try {
+      await railwayApi.updateUserProfile({
+        displayName: displayName.trim() || userProfile?.displayName,
+        gpsConsent: nextConsent
+      });
+      const updated = {
+        ...userProfile,
+        gpsConsent: nextConsent
+      };
+      await nativeService.setUserLocationProfile(updated as any);
+      setUserProfile(updated as any);
+      nativeService.triggerHaptic('light');
+    } catch (e) {}
   };
 
   const handleClearAllData = async () => {
@@ -413,6 +497,155 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onNavigate }) => {
         </div>
       </div>
 
+      {/* 2.8. USER PROFILE & SUPABASE CROWDSOURCING */}
+      <div className="card" style={{ padding: '16px', marginBottom: '20px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px', flexWrap: 'wrap', gap: '8px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <div style={{
+              width: '32px',
+              height: '32px',
+              borderRadius: '8px',
+              backgroundColor: 'rgba(34, 197, 94, 0.1)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: 'var(--color-primary-forest)'
+            }}>
+              <User size={18} />
+            </div>
+            <div>
+              <h3 style={{ fontSize: '14px', fontWeight: 700, margin: 0, color: 'var(--color-primary-dark)' }}>
+                User Profile &amp; Crowdsourcing
+              </h3>
+              <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: 0 }}>
+                Synced with Supabase secure authentication
+              </p>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => window.dispatchEvent(new CustomEvent('fatak:open-my-surveys'))}
+            className="btn btn-secondary"
+            style={{ fontSize: '11.5px', padding: '6px 12px', display: 'flex', alignItems: 'center', gap: '5px' }}
+          >
+            <FileText size={13} />
+            <span>My Ground Reports</span>
+          </button>
+        </div>
+
+        {/* DISPLAY NAME EDITING */}
+        <form onSubmit={handleSaveProfile} style={{ marginBottom: '14px' }}>
+          <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '6px' }}>
+            Display Name
+          </label>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <input
+              type="text"
+              value={displayName}
+              onChange={(e) => setDisplayName(e.target.value)}
+              placeholder="e.g., Prompt Pirates"
+              className="input-field"
+              style={{
+                flex: 1,
+                fontSize: '13px',
+                padding: '8px 12px',
+                backgroundColor: 'var(--bg-secondary)',
+                border: '1px solid var(--border-soft)',
+                borderRadius: '8px',
+                color: 'var(--text-primary)'
+              }}
+            />
+            <button
+              type="submit"
+              disabled={isSavingProfile || !displayName.trim()}
+              className="btn btn-primary"
+              style={{
+                fontSize: '12px',
+                padding: '8px 14px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '5px'
+              }}
+            >
+              <Save size={13} />
+              <span>{isSavingProfile ? 'Saving...' : 'Save'}</span>
+            </button>
+          </div>
+          {profileSaveMsg && (
+            <div style={{
+              marginTop: '6px',
+              fontSize: '11px',
+              fontWeight: 600,
+              color: profileSaveMsg.type === 'success' ? 'var(--status-open)' : 'var(--critical-red)'
+            }}>
+              {profileSaveMsg.text}
+            </div>
+          )}
+        </form>
+
+        {/* USER ID BADGE */}
+        {userProfile?.userId && (
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            padding: '8px 10px',
+            backgroundColor: 'var(--bg-secondary)',
+            borderRadius: '6px',
+            border: '1px solid var(--border-soft)',
+            fontSize: '11px',
+            marginBottom: '14px'
+          }}>
+            <span style={{ color: 'var(--text-secondary)' }}>User Profile ID:</span>
+            <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--text-primary)', fontWeight: 600 }}>
+              {userProfile.userId.slice(0, 18)}...
+            </span>
+          </div>
+        )}
+
+        {/* GPS SURVEY CONSENT TOGGLE */}
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: '10px 0',
+          borderTop: '1px solid var(--border-soft)',
+          borderBottom: '1px solid var(--border-soft)',
+          marginBottom: '12px'
+        }}>
+          <div>
+            <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>
+              Proximity Crossing Surveys
+            </div>
+            <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
+              Notify me to verify gate status when within 500m of a railway crossing
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={handleToggleGpsConsent}
+            className={`btn ${gpsConsent ? 'btn-primary' : 'btn-secondary'}`}
+            style={{ fontSize: '11px', padding: '5px 12px' }}
+          >
+            {gpsConsent ? 'Enabled' : 'Disabled'}
+          </button>
+        </div>
+
+        {/* OS RESTRICTIONS EXPLANATION */}
+        <div style={{
+          padding: '10px 12px',
+          backgroundColor: 'rgba(59, 130, 246, 0.06)',
+          borderRadius: '8px',
+          border: '1px solid rgba(59, 130, 246, 0.2)',
+          fontSize: '11.5px',
+          color: 'var(--text-secondary)',
+          lineHeight: 1.4
+        }}>
+          <strong style={{ color: 'var(--text-primary)' }}>Background Location Note:</strong> For timely departure reminders and gate warnings while traveling, please ensure location access is set to "Allow all the time" in your device settings.
+        </div>
+      </div>
+
       {/* 3. PERMISSIONS STATUS */}
       <div className="card" style={{ padding: '16px', marginBottom: '20px' }}>
         <h3 style={{ fontSize: '14px', fontWeight: 700, margin: '0 0 12px 0', color: 'var(--color-primary-dark)' }}>
@@ -485,7 +718,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onNavigate }) => {
           Explore Platform Modules
         </h3>
         <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '0 0 14px 0' }}>
-          Direct access to all Amritsar railway corridors, delay analytics, and sensor feeds
+          Direct access to train schedules, delay analytics, and system status
         </p>
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(220px, 100%), 1fr))', gap: '10px' }}>
@@ -506,7 +739,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onNavigate }) => {
               <Train size={17} color="var(--accent-primary)" />
               <div>
                 <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text-primary)' }}>Train Movements</div>
-                <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Live Sector Timetables & GPS</div>
+                <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Live Timetables &amp; Tracking</div>
               </div>
             </div>
             <ChevronRight size={16} color="var(--text-muted)" />
@@ -529,7 +762,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onNavigate }) => {
               <Bell size={17} color="var(--accent-primary)" />
               <div>
                 <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text-primary)' }}>Notifications</div>
-                <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Departure & Gate Alarms</div>
+                <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Departure &amp; Gate Alarms</div>
               </div>
             </div>
             <ChevronRight size={16} color="var(--text-muted)" />
@@ -551,8 +784,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onNavigate }) => {
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
               <BarChart3 size={17} color="var(--accent-primary)" />
               <div>
-                <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text-primary)' }}>Forecast Analytics</div>
-                <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Historical Delay Trends</div>
+                <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text-primary)' }}>Delay Trends</div>
+                <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Historical Crossing Analytics</div>
               </div>
             </div>
             <ChevronRight size={16} color="var(--text-muted)" />
@@ -574,8 +807,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onNavigate }) => {
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
               <Activity size={17} color="var(--accent-primary)" />
               <div>
-                <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text-primary)' }}>Data Health</div>
-                <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>OSM Corridors & Diagnostics</div>
+                <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text-primary)' }}>Service Health</div>
+                <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Railway Feeds &amp; System Status</div>
               </div>
             </div>
             <ChevronRight size={16} color="var(--text-muted)" />

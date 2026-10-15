@@ -2185,15 +2185,15 @@ export const JourneyPlannerView: React.FC<JourneyPlannerViewProps> = ({
               {selectedCrossing.gateStatusLabel}
             </span>
             <span style={{ fontSize: '11.5px', fontWeight: 700, color: 'var(--text-primary)' }}>
-              {selectedCrossing.isDelayUnknown ? 'Delay UNCONFIRMED' : (selectedCrossing.delaySec ? `+${Math.round(selectedCrossing.delaySec / 60)}m estimated delay` : 'Zero delay')}
+              {selectedCrossing.isDelayUnknown ? 'Delay Unconfirmed' : (selectedCrossing.delaySec ? `+${Math.round(selectedCrossing.delaySec / 60)}m estimated delay` : 'No delay')}
             </span>
           </div>
 
-          {/* Railway Telemetry & Uncertainty */}
+          {/* Railway Status & Details */}
           <div style={{ fontSize: '11.5px', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
-            <div><strong>Corridor:</strong> {selectedCrossing.corridorName || 'Amritsar Corridor'}</div>
-            <div style={{ marginTop: '2px' }}><strong>Station Telemetry:</strong> {selectedCrossing.observedRailwayStationEvents || 'No active train logged in sector.'}</div>
-            <div style={{ marginTop: '2px' }}><strong>Physical Barrier:</strong> Uninstrumented (Kinematic prediction)</div>
+            <div><strong>Railway Line:</strong> {selectedCrossing.corridorName || 'Amritsar Line'}</div>
+            <div style={{ marginTop: '2px' }}><strong>Station Updates:</strong> {selectedCrossing.observedRailwayStationEvents || 'No active train recorded in this area.'}</div>
+            <div style={{ marginTop: '2px' }}><strong>Barrier Status:</strong> Estimated from live train movement</div>
             {selectedCrossing.uncertaintyReason && (
               <div style={{ marginTop: '4px', fontSize: '10.5px', color: 'var(--text-muted)', fontStyle: 'italic' }}>
                 {selectedCrossing.uncertaintyReason}

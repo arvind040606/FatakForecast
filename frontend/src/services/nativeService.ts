@@ -87,7 +87,9 @@ export const DEMO_PRESET_PLACES: SavedPlace[] = [
 ];
 
 // Production Cloud Backend Gateway (Publicly Accessible over HTTPS)
-export const PRODUCTION_BACKEND_URL = 'https://fatakforecast.vercel.app';
+export const RENDER_BACKEND_URL = 'https://fatakforecast-backend.onrender.com';
+export const VERCEL_FALLBACK_URL = 'https://fatakforecast.vercel.app';
+export const PRODUCTION_BACKEND_URL = RENDER_BACKEND_URL;
 
 class NativeService {
   private isCapacitorNative: boolean = false;
@@ -259,9 +261,12 @@ class NativeService {
 
   private async loadPersistedData() {
     try {
+      const isLoopbackWeb = typeof window !== 'undefined' && 
+        (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+
       // 1. Backend URL
       const storedUrl = await this.storageGet('fatak_backend_url');
-      const isLegacyOrIncompatible = storedUrl && (
+      const isLegacyOrIncompatible = storedUrl && !isLoopbackWeb && (
         storedUrl.includes('localhost') || 
         storedUrl.includes('127.0.0.1') || 
         storedUrl.includes('10.211.') || 
@@ -273,7 +278,11 @@ class NativeService {
 
       const isMobileEnv = this.isNative() || Capacitor.isNativePlatform();
 
-      if (isMobileEnv || !storedUrl || isLegacyOrIncompatible) {
+      if (isLoopbackWeb) {
+        // In local web development, always default to the active local backend port 8787
+        this.backendBaseUrl = (storedUrl && storedUrl.includes('8787')) ? storedUrl : 'http://localhost:8787';
+        await this.storageSet('fatak_backend_url', this.backendBaseUrl);
+      } else if (isMobileEnv || !storedUrl || isLegacyOrIncompatible) {
         this.backendBaseUrl = PRODUCTION_BACKEND_URL;
         await this.storageSet('fatak_backend_url', this.backendBaseUrl);
         try {
@@ -637,10 +646,13 @@ class NativeService {
   }
 
   public async probeWorkingBackendUrl(): Promise<string | null> {
+    const viteEnvUrl = (import.meta as any).env?.VITE_BACKEND_URL;
     const candidateList = [
-      PRODUCTION_BACKEND_URL,
+      viteEnvUrl,
+      RENDER_BACKEND_URL,
       this.backendBaseUrl,
-      this.getDefaultBackendUrl()
+      this.getDefaultBackendUrl(),
+      VERCEL_FALLBACK_URL
     ];
     const candidates = Array.from(new Set(candidateList.filter(Boolean)));
 

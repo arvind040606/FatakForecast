@@ -5,6 +5,9 @@ import { BottomNav } from './components/BottomNav';
 import { CrossingDetailPanel } from './components/CrossingDetailPanel';
 import { TrainScheduleModal } from './components/TrainScheduleModal';
 import { LocationOnboardingModal } from './components/LocationOnboardingModal';
+import { CrossingSurveyModal } from './components/CrossingSurveyModal';
+import { UserSurveysModal } from './components/UserSurveysModal';
+import { geofenceService } from './services/geofenceService';
 
 import { HomeView } from './views/HomeView';
 import { CrossingsView } from './views/CrossingsView';
@@ -90,6 +93,9 @@ export function App() {
     };
   }, []);
 
+  const [surveyCrossing, setSurveyCrossing] = useState<RailwayCrossing | null>(null);
+  const [showUserSurveysModal, setShowUserSurveysModal] = useState<boolean>(false);
+
   // Trigger first-time onboarding modal after startup intro has concluded
   useEffect(() => {
     if (!showIntro && !nativeService.isLocationOnboarded()) {
@@ -103,6 +109,34 @@ export function App() {
   const [corridors, setCorridors] = useState<RailwayCorridor[]>(INITIAL_CORRIDORS);
   const [metrics, setMetrics] = useState<OperationalMetrics>(INITIAL_METRICS);
   const [lastUpdate, setLastUpdate] = useState<string>(new Date().toISOString());
+
+  // Geofence proximity monitoring and custom event triggers
+  useEffect(() => {
+    if (crossings && crossings.length > 0 && userProfile?.gpsConsent) {
+      geofenceService.startMonitoring(crossings);
+    } else {
+      geofenceService.stopMonitoring();
+    }
+
+    const handleGeofenceCrossing = (e: any) => {
+      const crossing = e.detail?.crossing;
+      if (crossing) {
+        setSurveyCrossing(crossing);
+      }
+    };
+    const handleOpenSurveys = () => {
+      setShowUserSurveysModal(true);
+    };
+
+    window.addEventListener('fatak:geofence-crossing-entered', handleGeofenceCrossing);
+    window.addEventListener('fatak:open-my-surveys', handleOpenSurveys);
+
+    return () => {
+      geofenceService.stopMonitoring();
+      window.removeEventListener('fatak:geofence-crossing-entered', handleGeofenceCrossing);
+      window.removeEventListener('fatak:open-my-surveys', handleOpenSurveys);
+    };
+  }, [crossings, userProfile?.gpsConsent]);
 
   // Track previous crossing statuses to trigger audio alerts on state change
   const prevStatusesRef = useRef<Map<string, string>>(new Map());
@@ -199,7 +233,31 @@ export function App() {
       });
 
       if (Array.isArray(payload.trains) && payload.trains.length > 0) {
-        setTrains(payload.trains);
+        setTrains(prev => {
+          if (!prev || prev.length !== payload.trains.length) {
+            return payload.trains;
+          }
+          const prevMap = new Map(prev.map(t => [String(t.number || t.id), t]));
+          let anyChanged = false;
+          const merged = payload.trains.map(nextT => {
+            const prevT = prevMap.get(String(nextT.number || nextT.id));
+            if (
+              prevT &&
+              prevT.status === nextT.status &&
+              prevT.dataState === nextT.dataState &&
+              prevT.lat === nextT.lat &&
+              prevT.lng === nextT.lng &&
+              prevT.speedKmH === nextT.speedKmH &&
+              prevT.delayMinutes === nextT.delayMinutes &&
+              prevT.isWithinAmritsarSector === nextT.isWithinAmritsarSector
+            ) {
+              return prevT;
+            }
+            anyChanged = true;
+            return nextT;
+          });
+          return anyChanged ? merged : prev;
+        });
       }
       if (payload.activeCorridors?.length) {
         setCorridors(payload.activeCorridors);
@@ -222,36 +280,49 @@ export function App() {
       });
       setLastUpdate(payload.timestamp);
 
-      // Check for status changes to trigger audible chime
+      // Track previous statuses for state transitions without noisy automatic chimes
       payload.crossings.forEach(c => {
-        const prev = prevStatusesRef.current.get(c.id);
-        if (prev && prev !== c.status) {
-          if (c.status === 'CLOSED') {
-            railwayApi.playAudioChime('CLOSED');
-          } else if (c.status === 'APPROACHING') {
-            railwayApi.playAudioChime('APPROACH');
-          } else if (c.status === 'OPEN') {
-            railwayApi.playAudioChime('OPEN');
-          }
-        }
         prevStatusesRef.current.set(c.id, c.status);
       });
 
       // Evaluate and trigger reliable alerts for relevant approaching crossings & credible predicted closures
       nativeService.processTelemetryCrossingAlerts(payload.crossings, payload.trains);
 
-      // Update selected crossing with latest data if open
+      // Update selected crossing with latest data if open (preserve object identity if unchanged)
       setSelectedCrossing(current => {
         if (!current) return null;
         const updated = payload.crossings.find(item => item.id === current.id);
-        return updated || current;
+        if (!updated) return current;
+        if (
+          current.status === updated.status &&
+          current.upcomingTrainId === updated.upcomingTrainId &&
+          current.estimatedGateClosingTime === updated.estimatedGateClosingTime &&
+          current.predictedReopenTime === updated.predictedReopenTime &&
+          current.timeToNextClosureSec === updated.timeToNextClosureSec &&
+          current.remainingWaitSec === updated.remainingWaitSec
+        ) {
+          return current;
+        }
+        return updated;
       });
 
-      // Update selected train with latest live telemetry
+      // Update selected train with latest live telemetry (preserve object identity if unchanged)
       setSelectedTrain(current => {
         if (!current) return null;
         const updated = payload.trains.find(t => t.id === current.id || String(t.number) === String(current.number));
-        return updated || current;
+        if (!updated) return current;
+        if (
+          current.status === updated.status &&
+          current.dataState === updated.dataState &&
+          current.lat === updated.lat &&
+          current.lng === updated.lng &&
+          current.speedKmH === updated.speedKmH &&
+          current.delayMinutes === updated.delayMinutes &&
+          current.isWithinAmritsarSector === updated.isWithinAmritsarSector
+        ) {
+          return current;
+        }
+        return updated;
       });
     });
 
@@ -308,7 +379,7 @@ export function App() {
           }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <WifiOff size={15} />
-              <span style={{ fontWeight: 600 }}>Network Offline — Displaying cached level crossings & timetable data.</span>
+              <span style={{ fontWeight: 600 }}>You are currently offline. Showing cached crossing information.</span>
             </div>
             <button 
               onClick={() => railwayApi.initWebSocket()}
@@ -424,6 +495,7 @@ export function App() {
             corridors={corridors}
             trains={trains}
             onClose={() => setSelectedCrossing(null)}
+            onOpenSurvey={(c) => setSurveyCrossing(c)}
           />
         )}
       </AnimatePresence>
@@ -465,6 +537,23 @@ export function App() {
           setShowLocationModal(false);
         }}
         isInitialOnboarding={!userProfile}
+      />
+
+      {/* CROWDSOURCED CROSSING SURVEY MODAL */}
+      <CrossingSurveyModal
+        isOpen={!!surveyCrossing}
+        crossings={crossings}
+        crossing={surveyCrossing}
+        onClose={() => setSurveyCrossing(null)}
+        onSuccess={() => {
+          setSurveyCrossing(null);
+        }}
+      />
+
+      {/* USER SURVEY HISTORY MODAL */}
+      <UserSurveysModal
+        isOpen={showUserSurveysModal}
+        onClose={() => setShowUserSurveysModal(false)}
       />
     </div>
   );

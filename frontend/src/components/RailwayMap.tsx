@@ -231,7 +231,7 @@ export const RailwayMap: React.FC<RailwayMapProps> = ({
         <div style="font-size: 11px;">
           <strong style="color: #35C8F4;">${corridor.name}</strong><br/>
           <span>${corridor.type} • Max ${corridor.speedLimitKmH} km/h</span><br/>
-          <span style="color: #94A3B8; font-size: 10px;">Source: OpenStreetMap Permanent Way</span>
+          <span style="color: #94A3B8; font-size: 10px;">Source: OpenStreetMap Railway Tracks</span>
         </div>
       `, { sticky: true });
 
@@ -460,14 +460,14 @@ export const RailwayMap: React.FC<RailwayMapProps> = ({
       const posTypeLabel = t.positionClassification === 'PROVIDER_REPORTED_POSITION'
         ? 'Verified Live GPS'
         : t.positionClassification === 'EXTRAPOLATED_POSITION'
-        ? 'Permanent Way Kinematics'
+        ? 'Live Movement'
         : t.positionClassification === 'STATION_PROGRESS'
-        ? 'Station Progress (Approximate)'
+        ? 'Station Progress (Estimated)'
         : t.positionClassification === 'SCHEDULED_POSITION'
-        ? 'Stationary Timetable'
+        ? 'Scheduled Departure'
         : t.positionClassification === 'SIMULATED_POSITION'
-        ? 'Synthetic Simulation'
-        : (snap.isSnapped ? 'Permanent Way Snapped' : 'Track Geometry Interpolation');
+        ? 'Simulated Movement'
+        : (snap.isSnapped ? 'Track Position' : 'Estimated Position');
 
       // 3D Realistic Locomotive Consist with High-Beam Headlights
       const icon = L.divIcon({
@@ -1155,15 +1155,15 @@ export const RailwayMap: React.FC<RailwayMapProps> = ({
               {activeSelectedTrain.positionClassification === 'PROVIDER_REPORTED_POSITION'
                 ? 'Verified Live GPS'
                 : activeSelectedTrain.positionClassification === 'EXTRAPOLATED_POSITION'
-                ? 'Permanent Way Kinematics'
+                ? 'Live Track Movement'
                 : activeSelectedTrain.positionClassification === 'STATION_PROGRESS'
-                ? 'Station Progress (Approximate)'
+                ? 'Station Progress (Estimated)'
                 : activeSelectedTrain.positionClassification === 'SCHEDULED_POSITION'
-                ? 'Stationary Timetable'
-                : 'Track Geometry Snapped'}
+                ? 'Scheduled Departure'
+                : 'Track Position'}
             </span>
             <span style={{ color: activeSelectedTrain.isStale ? '#EF4444' : '#94A3B8', fontWeight: 500 }}>
-              {activeSelectedTrain.isStale ? '⚠️ Stale (>15m)' : '✓ Live Telemetry'}
+              {activeSelectedTrain.isStale ? '⚠️ Delayed (>15m)' : '✓ Live Tracking'}
             </span>
           </div>
 

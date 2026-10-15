@@ -8,7 +8,6 @@ import {
   Search, 
   Filter, 
   ArrowRight, 
-  Radio, 
   LayoutGrid, 
   List,
   ChevronRight,
@@ -56,6 +55,32 @@ export const TrainMovementsView: React.FC<TrainMovementsViewProps> = ({
     if (filterSector === 'RUNNING') return t.status === 'IN_TRANSIT' || t.status === 'APPROACHING_STATION' || t.status === 'CROSSING_GATE';
     if (filterSector === 'SCHEDULED') return t.status === 'NOT_STARTED' || t.dataState === 'SCHEDULED';
     return true;
+  });
+
+  // Strictly deterministic, stable train ordering to prevent cards jumping or shuffling
+  const sortedTrains = [...filteredTrains].sort((a, b) => {
+    // 1. In-sector trains first
+    const inSecA = a.isWithinAmritsarSector ? 1 : 0;
+    const inSecB = b.isWithinAmritsarSector ? 1 : 0;
+    if (inSecA !== inSecB) return inSecB - inSecA;
+
+    // 2. Active status priority
+    const getStatusPriority = (t: SectorTrain) => {
+      if (t.status === 'CROSSING_GATE') return 5;
+      if (t.status === 'IN_TRANSIT') return 4;
+      if (t.status === 'APPROACHING_STATION' || t.status === 'PLATFORM_BOARDING') return 3;
+      if (t.status === 'NOT_STARTED') return 2;
+      if (t.status === 'OUT_OF_SECTOR') return 1;
+      return 0;
+    };
+    const prioA = getStatusPriority(a);
+    const prioB = getStatusPriority(b);
+    if (prioA !== prioB) return prioB - prioA;
+
+    // 3. Guaranteed deterministic stable tie-breaker by train number
+    const numA = String(a.number || a.id || '');
+    const numB = String(b.number || b.id || '');
+    return numA.localeCompare(numB);
   });
 
   return (
@@ -110,7 +135,7 @@ export const TrainMovementsView: React.FC<TrainMovementsViewProps> = ({
           }}>
             {[
               { id: 'ALL', label: `All (${trains.length})` },
-              { id: 'IN_SECTOR', label: `Amritsar Sector (${trains.filter(t => t.isWithinAmritsarSector).length})` },
+              { id: 'IN_SECTOR', label: `Amritsar Area (${trains.filter(t => t.isWithinAmritsarSector).length})` },
               { id: 'RUNNING', label: 'In Transit' }
             ].map(tab => (
               <button
@@ -181,21 +206,6 @@ export const TrainMovementsView: React.FC<TrainMovementsViewProps> = ({
         </div>
       </div>
 
-      {/* COMMUTER TELEMETRY DISCLOSURE ADVISORY */}
-      <div className="panel" style={{
-        padding: '12px 18px',
-        marginBottom: '20px',
-        backgroundColor: 'var(--bg-surface)',
-        display: 'flex',
-        alignItems: 'center',
-        gap: '12px'
-      }}>
-        <Radio size={17} color="var(--accent-primary)" style={{ flexShrink: 0 }} />
-        <div style={{ fontSize: '12px', color: 'var(--text-secondary)', lineHeight: '1.5' }}>
-          <strong style={{ color: 'var(--accent-emphasis)' }}>Authoritative Telemetry:</strong>{' '}
-          Train positions reflect verified Northern Railway timetables and active GPS telemetry. Timetable speeds are strictly separated from live speedometer telemetry.
-        </div>
-      </div>
 
       {/* CARDS VIEW (DEFAULT & RESPONSIVE GRID) */}
       {viewMode === 'cards' && (
@@ -205,13 +215,13 @@ export const TrainMovementsView: React.FC<TrainMovementsViewProps> = ({
           gap: '16px',
           marginBottom: '24px'
         }}>
-          {filteredTrains.map(train => {
+          {sortedTrains.map(train => {
             const targetCrossing = crossings.find(c => c.id === train.targetCrossingId);
             const st = getDisplayStatus(train);
 
             return (
               <div 
-                key={train.id}
+                key={train.id || train.number}
                 className="mobile-card"
                 style={{
                   backgroundColor: 'var(--bg-surface)',
@@ -312,10 +322,10 @@ export const TrainMovementsView: React.FC<TrainMovementsViewProps> = ({
                   <div style={{ backgroundColor: 'var(--bg-secondary)', padding: '9px 12px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-subtle)' }}>
                     <div style={{ color: 'var(--text-muted)', fontSize: '10px', textTransform: 'uppercase', fontWeight: 600 }}>Current Station</div>
                     <div style={{ fontWeight: 700, color: 'var(--accent-emphasis)', marginTop: '2px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                      {train.currentStationName || train.lastReportedLocation || (train.isWithinAmritsarSector ? 'In Sector' : 'En Route')}
+                      {train.currentStationName || train.lastReportedLocation || (train.isWithinAmritsarSector ? 'Near Amritsar' : 'En Route')}
                     </div>
                     <div style={{ fontSize: '10.5px', color: train.isWithinAmritsarSector ? 'var(--status-open)' : 'var(--text-secondary)', marginTop: '1px' }}>
-                      {train.isWithinAmritsarSector ? '✓ Amritsar Sector' : 'En route to sector'}
+                      {train.isWithinAmritsarSector ? '✓ Near Amritsar' : 'En route'}
                     </div>
                   </div>
 
@@ -331,12 +341,12 @@ export const TrainMovementsView: React.FC<TrainMovementsViewProps> = ({
                         : (train.status === 'PLATFORM_BOARDING' || train.status === 'STATIONARY')
                         ? '0 km/h (Platform)'
                         : (train.hasLiveSpeedMeasurement && typeof train.liveSpeedKmH === 'number' && train.liveSpeedKmH > 0)
-                        ? `${train.liveSpeedKmH} km/h (GPS)`
+                        ? `${train.liveSpeedKmH} km/h (Live)`
                         : (typeof train.speedKmH === 'number' && train.speedKmH > 0)
-                        ? `~${train.speedKmH} km/h (Sectional)`
+                        ? `~${train.speedKmH} km/h (Estimated)`
                         : (typeof train.sectionalSpeedKmH === 'number' && train.sectionalSpeedKmH > 0)
-                        ? `~${train.sectionalSpeedKmH} km/h (Sectional)`
-                        : '~55 km/h (Sectional)'}
+                        ? `~${train.sectionalSpeedKmH} km/h (Estimated)`
+                        : '~55 km/h (Estimated)'}
                     </div>
                     <div style={{ fontSize: '10.5px', fontWeight: 600, color: (train.delayMinutes || 0) > 15 ? 'var(--status-approaching)' : 'var(--status-open)', marginTop: '1px' }}>
                       {(train.delayMinutes || 0) > 0 ? `+${train.delayMinutes}m delay` : 'On Time'}
@@ -396,19 +406,19 @@ export const TrainMovementsView: React.FC<TrainMovementsViewProps> = ({
                 <th>Status</th>
                 <th>Type</th>
                 <th>Route</th>
-                <th>Speed &amp; Telemetry</th>
+                <th>Speed &amp; Tracking</th>
                 <th>Current Position</th>
                 <th>Impacting Fatak</th>
                 <th style={{ textAlign: 'right' }}>Schedule</th>
               </tr>
             </thead>
             <tbody>
-              {filteredTrains.map(train => {
+              {sortedTrains.map(train => {
                 const targetCrossing = crossings.find(c => c.id === train.targetCrossingId);
                 const st = getDisplayStatus(train);
 
                 return (
-                  <tr key={train.id}>
+                  <tr key={train.id || train.number}>
                     <td>
                       <div>
                         <div style={{ fontWeight: 700, color: 'var(--text-primary)', fontSize: '13.5px' }}>
@@ -449,7 +459,7 @@ export const TrainMovementsView: React.FC<TrainMovementsViewProps> = ({
                         {train.origin} ➔ {train.destination}
                       </div>
                       <div style={{ fontSize: '11px', color: train.isWithinAmritsarSector ? 'var(--status-open)' : 'var(--text-secondary)' }}>
-                        {train.isWithinAmritsarSector ? '✓ Active in sector' : 'Out of sector'}
+                        {train.isWithinAmritsarSector ? '✓ Near Amritsar' : 'Outside Area'}
                       </div>
                     </td>
 
@@ -487,7 +497,7 @@ export const TrainMovementsView: React.FC<TrainMovementsViewProps> = ({
                           <span style={{ fontFamily: 'var(--font-mono)', fontSize: '12px', fontWeight: 600, color: 'var(--accent-primary)' }}>
                             ~{train.speedKmH || train.sectionalSpeedKmH || 55} km/h
                           </span>
-                          <div style={{ fontSize: '10px', color: 'var(--text-muted)' }}>Sectional speed</div>
+                          <div style={{ fontSize: '10px', color: 'var(--text-muted)' }}>Estimated speed</div>
                         </div>
                       )}
                     </td>

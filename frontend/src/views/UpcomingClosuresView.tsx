@@ -47,13 +47,18 @@ export const UpcomingClosuresView: React.FC<UpcomingClosuresViewProps> = ({
     if (aApp && !bApp) return -1;
     if (!aApp && bApp) return 1;
 
-    // 3. Upcoming countdowns next (sorted by soonest closure)
+    // 3. Upcoming countdowns next (sorted by anchored closure time to prevent second-by-second jitter)
     const aHasCountdown = a.countdownAvailable && a.timeToNextClosureSec > 0;
     const bHasCountdown = b.countdownAvailable && b.timeToNextClosureSec > 0;
     if (aHasCountdown && !bHasCountdown) return -1;
     if (!aHasCountdown && bHasCountdown) return 1;
     if (aHasCountdown && bHasCountdown) {
-      return a.timeToNextClosureSec - b.timeToNextClosureSec;
+      const timeA = getAuthoritativeTargetEpoch(a, 'closure', now) || (a.estimatedGateClosingTime ? new Date(a.estimatedGateClosingTime).getTime() : (now + a.timeToNextClosureSec * 1000));
+      const timeB = getAuthoritativeTargetEpoch(b, 'closure', now) || (b.estimatedGateClosingTime ? new Date(b.estimatedGateClosingTime).getTime() : (now + b.timeToNextClosureSec * 1000));
+      if (timeA !== timeB) {
+        return timeA - timeB;
+      }
+      return a.id.localeCompare(b.id);
     }
 
     // 4. Genuine open crossings
@@ -155,8 +160,8 @@ export const UpcomingClosuresView: React.FC<UpcomingClosuresViewProps> = ({
       }}>
         <Info size={17} color="var(--accent-primary)" style={{ flexShrink: 0 }} />
         <div style={{ fontSize: '12px', color: 'var(--text-secondary)', lineHeight: '1.5' }}>
-          <strong style={{ color: 'var(--accent-emphasis)' }}>Forecasting Methodology:</strong>{' '}
-          Calculations are derived by integrating train distance along verified railway track polylines. Closure estimates incorporate standard interlocking safety buffers prior to train passage.
+          <strong style={{ color: 'var(--accent-emphasis)' }}>How it works:</strong>{' '}
+          Closure predictions are calculated from live train tracking and expected approach speeds, including standard safety buffers before the train reaches each crossing.
         </div>
       </div>
 
@@ -400,7 +405,7 @@ export const UpcomingClosuresView: React.FC<UpcomingClosuresViewProps> = ({
                   {/* 4. When timing is unconfirmed / unavailable */}
                   {timing.isTimingUnavailable && !timing.activeTrain && (
                     <div style={{ fontSize: '11px', color: 'var(--text-muted)', lineHeight: '1.3' }}>
-                      Live permanent-way telemetry currently unconfirmed. Proceed with caution.
+                      Live track status is currently updating. Proceed with caution.
                     </div>
                   )}
 

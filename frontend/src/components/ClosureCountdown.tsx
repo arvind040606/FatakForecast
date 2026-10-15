@@ -147,11 +147,11 @@ export const ClosureCountdown: React.FC<ClosureCountdownProps> = ({ crossing, sh
     }
   } else if (isClosed) {
     step2Time = 'Traversing';
-    step2Sub = 'Train in crossing block';
+    step2Sub = 'Train passing crossing';
     step2State = 'active';
   } else if (isPassageClear) {
     step2Time = 'Track Clear';
-    step2Sub = 'Corridor clear';
+    step2Sub = 'Tracks clear';
     step2State = 'clear';
   }
 
@@ -171,7 +171,7 @@ export const ClosureCountdown: React.FC<ClosureCountdownProps> = ({ crossing, sh
   } else if (showActiveClosureCountdown) {
     step3Title = 'Reopening Estimate';
     step3Time = 'Calculated after closure';
-    step3Sub = 'Awaiting locked barrier state';
+    step3Sub = 'Estimated once train clears';
     step3State = 'upcoming';
   } else if (isPassageClear) {
     step3Title = 'Crossing Status';
@@ -181,7 +181,7 @@ export const ClosureCountdown: React.FC<ClosureCountdownProps> = ({ crossing, sh
   } else {
     step3Title = 'Crossing Status';
     step3Time = 'Status Unconfirmed';
-    step3Sub = 'Telemetry feed unverified';
+    step3Sub = 'Waiting for live update';
     step3State = 'clear';
   }
 
@@ -486,7 +486,7 @@ export const ClosureCountdown: React.FC<ClosureCountdownProps> = ({ crossing, sh
             fontWeight: 700,
             color: isVerifiedLive ? 'var(--status-open)' : isEstimate ? 'var(--warning-amber)' : 'var(--text-muted)'
           }}>
-            {isVerifiedLive ? 'Verified Live (High)' : isEstimate ? 'Timetable Estimate (Moderate)' : 'Timing Unavailable'}
+            {isVerifiedLive ? 'Verified Live' : isEstimate ? 'Schedule Estimate' : 'Timing Unavailable'}
           </span>
         </div>
 
@@ -495,7 +495,7 @@ export const ClosureCountdown: React.FC<ClosureCountdownProps> = ({ crossing, sh
           {secondsSinceUpdate !== null ? (
             <span>Updated {secondsSinceUpdate}s ago {updateFormatted && `(${updateFormatted})`}</span>
           ) : (
-            <span>Real-time telemetry</span>
+            <span>Live tracking active</span>
           )}
         </div>
       </div>

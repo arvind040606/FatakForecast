@@ -88,7 +88,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({
     { 
       route: '/trains' as ActiveRoute, 
       label: 'Train Movements & Schedules', 
-      desc: 'Active sector trains, timetables and arrival timelines',
+      desc: 'Active trains near Amritsar and expected schedules',
       icon: Train,
       badge: `${metrics.activeSectorTrains}`
     },

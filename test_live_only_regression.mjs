@@ -200,12 +200,12 @@ test('Crossing evaluation marks physical boom state as UNKNOWN and specifies cle
     crossing,
     [], // No approaching trains
     corridorCoords,
-    { feedStatus: 'CONNECTED', isFeedFresh: true, lastSuccessfulSync: new Date().toISOString() }
+    { feedStatus: 'CONNECTED', isFeedFresh: true, lastSuccessfulSync: new Date().toISOString(), apiConfirmsCorridorClear: true }
   );
 
   assert.strictEqual(evaluation.status, 'OPEN');
-  assert.strictEqual(evaluation.gateStatusClassification, 'PREDICTED PASSAGE CLEAR');
-  assert.strictEqual(evaluation.gateStatusLabel, 'PREDICTED CLEAR');
+  assert.strictEqual(evaluation.gateStatusClassification, 'NO APPROACH DETECTED');
+  assert.strictEqual(evaluation.gateStatusLabel, 'OPEN');
   assert.strictEqual(evaluation.observedPhysicalGateState, 'UNKNOWN');
   assert.strictEqual(evaluation.physicalSensorAvailable, false);
   assert.ok(evaluation.physicalSensorNote.includes('UNKNOWN'));

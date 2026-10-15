@@ -30,6 +30,61 @@ function ensureEnvLoaded() {
 }
 ensureEnvLoaded();
 
+const rawCorridors = JSON.parse(fs.readFileSync(path.join(__dirname, 'amritsar_corridors_osm.json'), 'utf8'));
+const RAILWAY_CORRIDORS = {};
+rawCorridors.forEach(c => { RAILWAY_CORRIDORS[c.id] = c; });
+
+function haversineKm(lat1, lon1, lat2, lon2) {
+  const R = 6371;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function advanceAlongPolyline(coords, startProgress, distKm, direction = 'UP') {
+  if (!coords || coords.length < 2) return null;
+  const maxIdx = coords.length - 1;
+  let curr = Math.max(0, Math.min(maxIdx, startProgress));
+  let remaining = distKm;
+  const isUp = direction === 'UP';
+  let iters = 0;
+  while (remaining > 0 && iters < 100) {
+    iters++;
+    if (isUp) {
+      const seg = Math.floor(curr);
+      if (seg >= maxIdx) return coords[maxIdx];
+      const dSeg = haversineKm(coords[seg][0], coords[seg][1], coords[seg + 1][0], coords[seg + 1][1]);
+      const avail = dSeg * (1 - (curr - seg));
+      if (remaining <= avail) {
+        const frac = (curr - seg) + (remaining / Math.max(0.0001, dSeg));
+        return [
+          coords[seg][0] + (coords[seg + 1][0] - coords[seg][0]) * frac,
+          coords[seg][1] + (coords[seg + 1][1] - coords[seg][1]) * frac
+        ];
+      }
+      remaining -= avail;
+      curr = seg + 1;
+    } else {
+      const seg = Math.ceil(curr);
+      if (seg <= 0) return coords[0];
+      const dSeg = haversineKm(coords[seg - 1][0], coords[seg - 1][1], coords[seg][0], coords[seg][1]);
+      const avail = dSeg * (curr - (seg - 1));
+      if (remaining <= avail) {
+        const frac = (curr - (seg - 1)) - (remaining / Math.max(0.0001, dSeg));
+        return [
+          coords[seg - 1][0] + (coords[seg][0] - coords[seg - 1][0]) * frac,
+          coords[seg - 1][1] + (coords[seg][1] - coords[seg - 1][1]) * frac
+        ];
+      }
+      remaining -= avail;
+      curr = seg - 1;
+    }
+  }
+  const finalIdx = Math.max(0, Math.min(maxIdx, Math.round(curr)));
+  return coords[finalIdx];
+}
+
 function withTimeout(promise, ms = 6000, fallbackMessage = 'Operation timed out') {
   return Promise.race([
     promise,
@@ -257,7 +312,7 @@ export class RailkitService {
 
         // Call trackTrainV2 directly (the official V2 endpoint)
         try {
-          rawResult = await withTimeout(railkit.trackTrainV2(cleanNum, dateStr), 6000, 'RailKit trackTrainV2 timeout');
+          rawResult = await withTimeout(railkit.trackTrainV2(cleanNum, dateStr), 10000, 'RailKit trackTrainV2 timeout');
         } catch (v2Err) {
           // If V2 throws quota, auth or client error:
           const errMsg = String(v2Err?.message || v2Err || '');
@@ -273,7 +328,7 @@ export class RailkitService {
           }
 
           // Single attempt V1 fallback only if V2 method unsupported
-          rawResult = await withTimeout(railkit.trackTrain(cleanNum, dateStr), 6000, 'RailKit trackTrain timeout');
+          rawResult = await withTimeout(railkit.trackTrain(cleanNum, dateStr), 10000, 'RailKit trackTrain timeout');
         }
 
         const latency = Date.now() - startTime;
@@ -399,30 +454,82 @@ export class RailkitService {
       delayMinutes = typeof data.currentLocation.delayMinutes === 'number' ? data.currentLocation.delayMinutes : (data.delayMinutes || 0);
     }
 
-    // Direction Resolution
-    const direction = (destCode === 'ASR' || destName.toLowerCase().includes('amritsar')) ? 'DOWN' : 'UP';
+    // Dynamic Route & Direction Resolution for Amritsar Sector
+    const PTK_STATIONS = ['VKA', 'BAT', 'DHW', 'GSP', 'DNN', 'PTK', 'KNG', 'JNT'];
+    const TT_STATIONS = ['BGTN', 'SBS', 'SNS', 'TTO', 'PAX', 'KEMK', 'DUQ'];
+    const ATT_STATIONS = ['CIA', 'KAS', 'ATT'];
+    const JUC_STATIONS = ['MOW', 'JNL', 'TRA', 'BTR', 'BEAS', 'DIW', 'HRP', 'HMR', 'KRE', 'SRX', 'JUC', 'JRC', 'CEU', 'PGW', 'GRY', 'PHR', 'LDH'];
 
-    // Corridor Assignment for Amritsar sector
     let corridorId = 'CORR_ASR_JUC';
-    if (trainNumber === '74688' || trainNumber === '74687' || trainNumber === '74685' || trainNumber === '04688' || trainNumber === '04690') {
-      corridorId = 'CORR_ASR_TT';
-    } else if (trainNumber === '06935' || trainNumber === '06936' || trainNumber === '06938' || trainNumber === '14633' || trainNumber === '14634') {
-      corridorId = 'CORR_ASR_PTK';
-    } else if (trainNumber === '04612' || trainNumber === '04611') {
-      corridorId = 'CORR_ASR_ATT';
-    } else if (Array.isArray(data.route)) {
-      const stnCodes = data.route.map(r => String(r.stnCode || '').toUpperCase());
-      if (stnCodes.some(c => ['BGTN', 'TTO', 'PAX', 'KEMK'].includes(c))) {
-        corridorId = 'CORR_ASR_TT';
-      } else if (stnCodes.some(c => ['VKA', 'BAT', 'DHW', 'GSP', 'PTK'].includes(c))) {
-        corridorId = 'CORR_ASR_PTK';
-      } else if (stnCodes.some(c => ['CIA', 'KAS', 'ATT'].includes(c))) {
-        corridorId = 'CORR_ASR_ATT';
+    let direction = 'UP';
+
+    const nextStn = data.currentLocation?.nextStation?.stnCode || data.nextHalt?.stnCode || null;
+    const prevStn = data.previousHalt?.stnCode || null;
+    const currStn = currentStationCode;
+
+    // Check if route schedule exists to determine sequence relative to ASR
+    if (Array.isArray(data.route) && data.route.length > 0) {
+      const asrStopIndex = data.route.findIndex(s => (s.stnCode === 'ASR' || s.stationCode === 'ASR'));
+      const currStopIndex = data.route.findIndex(s => (s.stnCode === currStn || s.stationCode === currStn));
+      const nextStopIndex = nextStn ? data.route.findIndex(s => (s.stnCode === nextStn || s.stationCode === nextStn)) : -1;
+
+      if (asrStopIndex !== -1) {
+        if (currStopIndex !== -1) {
+          if (currStopIndex < asrStopIndex) {
+            // Train is currently before ASR on its route => Traveling DOWN towards Amritsar!
+            direction = 'DOWN';
+            const priorStations = data.route.slice(currStopIndex, asrStopIndex).map(s => s.stnCode || s.stationCode);
+            if (priorStations.some(c => PTK_STATIONS.includes(c))) corridorId = 'CORR_ASR_PTK';
+            else if (priorStations.some(c => TT_STATIONS.includes(c))) corridorId = 'CORR_ASR_TT';
+            else if (priorStations.some(c => ATT_STATIONS.includes(c))) corridorId = 'CORR_ASR_ATT';
+            else corridorId = 'CORR_ASR_JUC';
+          } else if (currStopIndex > asrStopIndex) {
+            // Train has already departed ASR on a multi-leg journey => Traveling UP away from Amritsar!
+            direction = 'UP';
+            const subsequentStations = data.route.slice(asrStopIndex + 1, currStopIndex + 2).map(s => s.stnCode || s.stationCode);
+            if (subsequentStations.some(c => JUC_STATIONS.includes(c))) corridorId = 'CORR_ASR_JUC';
+            else if (subsequentStations.some(c => TT_STATIONS.includes(c))) corridorId = 'CORR_ASR_TT';
+            else if (subsequentStations.some(c => PTK_STATIONS.includes(c))) corridorId = 'CORR_ASR_PTK';
+            else if (subsequentStations.some(c => ATT_STATIONS.includes(c))) corridorId = 'CORR_ASR_ATT';
+            else corridorId = 'CORR_ASR_JUC';
+          } else {
+            // Train is currently AT Amritsar Junction (currStopIndex === asrStopIndex)
+            if (nextStopIndex > asrStopIndex) {
+              direction = 'UP';
+              const nextStations = data.route.slice(asrStopIndex + 1).map(s => s.stnCode || s.stationCode);
+              if (nextStations.some(c => JUC_STATIONS.includes(c))) corridorId = 'CORR_ASR_JUC';
+              else if (nextStations.some(c => TT_STATIONS.includes(c))) corridorId = 'CORR_ASR_TT';
+              else if (nextStations.some(c => PTK_STATIONS.includes(c))) corridorId = 'CORR_ASR_PTK';
+              else if (nextStations.some(c => ATT_STATIONS.includes(c))) corridorId = 'CORR_ASR_ATT';
+            } else {
+              direction = 'DOWN';
+              const prevStations = data.route.slice(0, asrStopIndex).map(s => s.stnCode || s.stationCode);
+              if (prevStations.some(c => PTK_STATIONS.includes(c))) corridorId = 'CORR_ASR_PTK';
+              else if (prevStations.some(c => TT_STATIONS.includes(c))) corridorId = 'CORR_ASR_TT';
+              else if (prevStations.some(c => ATT_STATIONS.includes(c))) corridorId = 'CORR_ASR_ATT';
+              else corridorId = 'CORR_ASR_JUC';
+            }
+          }
+        } else {
+          direction = (destCode === 'ASR' || destName.toLowerCase().includes('amritsar')) ? 'DOWN' : 'UP';
+          const stnCodes = data.route.map(r => String(r.stnCode || '').toUpperCase());
+          if (stnCodes.some(c => PTK_STATIONS.includes(c))) corridorId = 'CORR_ASR_PTK';
+          else if (stnCodes.some(c => TT_STATIONS.includes(c))) corridorId = 'CORR_ASR_TT';
+          else if (stnCodes.some(c => ATT_STATIONS.includes(c))) corridorId = 'CORR_ASR_ATT';
+          else corridorId = 'CORR_ASR_JUC';
+        }
       } else {
-        corridorId = 'CORR_ASR_JUC';
+        direction = (destCode === 'ASR' || destName.toLowerCase().includes('amritsar')) ? 'DOWN' : 'UP';
       }
     } else {
-      corridorId = 'CORR_ASR_JUC';
+      direction = (destCode === 'ASR' || destName.toLowerCase().includes('amritsar')) ? 'DOWN' : 'UP';
+      if (PTK_STATIONS.includes(currStn) || PTK_STATIONS.includes(nextStn)) corridorId = 'CORR_ASR_PTK';
+      else if (TT_STATIONS.includes(currStn) || TT_STATIONS.includes(nextStn)) corridorId = 'CORR_ASR_TT';
+      else if (ATT_STATIONS.includes(currStn) || ATT_STATIONS.includes(nextStn)) corridorId = 'CORR_ASR_ATT';
+      else if (['74688', '74687', '74685', '74684', '74686', '74681', '74682', '74683', '04688', '04690', '04687', '04689'].includes(trainNumber)) corridorId = 'CORR_ASR_TT';
+      else if (['06935', '06936', '06938', '14633', '14634', '19416', '19415', '04614', '04613', '14034', '14033'].includes(trainNumber)) corridorId = 'CORR_ASR_PTK';
+      else if (['04612', '04611'].includes(trainNumber)) corridorId = 'CORR_ASR_ATT';
+      else corridorId = 'CORR_ASR_JUC';
     }
 
     // Status Normalization
@@ -467,6 +574,12 @@ export class RailkitService {
         if (routeMatch?.cord?.lat && typeof rLon === 'number') {
           lat = routeMatch.cord.lat;
           lng = rLon;
+        } else if (data.previousHalt?.stnCode && STATION_COORDINATES[data.previousHalt.stnCode]) {
+          lat = STATION_COORDINATES[data.previousHalt.stnCode].lat;
+          lng = STATION_COORDINATES[data.previousHalt.stnCode].lng;
+        } else if (data.nextHalt?.stnCode && STATION_COORDINATES[data.nextHalt.stnCode]) {
+          lat = STATION_COORDINATES[data.nextHalt.stnCode].lat;
+          lng = STATION_COORDINATES[data.nextHalt.stnCode].lng;
         } else if (data.currentLocation?.nextStation) {
           const nextCode = data.currentLocation.nextStation.stnCode || data.currentLocation.nextStation.stationCode;
           if (STATION_COORDINATES[nextCode]) {
@@ -479,6 +592,11 @@ export class RailkitService {
       }
     }
 
+    // Contextual station naming enrichment (e.g. if near Ambala Cantt)
+    if (data.previousHalt?.stnName && currentStationName && !currentStationName.includes(data.previousHalt.stnName)) {
+      currentStationName = `${currentStationName} (near ${data.previousHalt.stnName})`;
+    }
+
     // 2. Geographic Sector Validation (85 km operational sector)
     let isWithinSector = false;
     let distanceFromAmritsarKm = null;
@@ -488,18 +606,36 @@ export class RailkitService {
       distanceFromAmritsarKm = sectorCheck.distanceFromAsrKm !== Infinity ? sectorCheck.distanceFromAsrKm : null;
     }
 
+    // Authoritative Provider Journey Progress Validation:
+    // If the train departed Amritsar (source ASR) and provider confirms it traveled > 85 km (e.g. 283 km away near Ambala/Delhi)
+    const reportedDistFromOrigin = typeof data.currentLocation?.distanceFromOriginKm === 'number'
+      ? data.currentLocation.distanceFromOriginKm
+      : null;
+    if ((sourceCode === 'ASR' || sourceName.toLowerCase().includes('amritsar')) && reportedDistFromOrigin !== null && reportedDistFromOrigin > GeographicValidator.AMRITSAR_SECTOR_RADIUS_KM) {
+      isWithinSector = false;
+      if (distanceFromAmritsarKm === null || distanceFromAmritsarKm < reportedDistFromOrigin) {
+        distanceFromAmritsarKm = Number(reportedDistFromOrigin.toFixed(1));
+      }
+    }
+
     // 3. Operational Status Classification
+    const isAtOriginStation = Boolean(
+      currentStationCode === sourceCode &&
+      (!reportedDistFromOrigin || reportedDistFromOrigin < 0.5) &&
+      (statusRaw === 'start' || statusRaw === 'at-station' || isNotStarted)
+    );
+
     let operationalStatus = 'IN_TRANSIT';
     if (isCancelled) {
       operationalStatus = 'CANCELLED';
     } else if (isNotStarted) {
       operationalStatus = 'NOT_STARTED';
-    } else if (statusRaw === 'completed' || statusRaw === 'terminated' || currentStationCode === destCode) {
+    } else if (statusRaw === 'completed' || statusRaw === 'terminated' || statusRaw === 'end' || currentStationCode === destCode) {
       operationalStatus = 'TERMINATED';
-    } else if (currentStationCode === sourceCode && (statusRaw === 'start' || data.currentLocation?.status === 'at-station')) {
-      operationalStatus = 'PLATFORM_BOARDING';
     } else if (!isWithinSector) {
       operationalStatus = 'OUT_OF_SECTOR';
+    } else if (isAtOriginStation) {
+      operationalStatus = 'PLATFORM_BOARDING';
     }
 
     // 4. Data Freshness & State Classification
@@ -515,13 +651,13 @@ export class RailkitService {
       dataState = 'SIMULATED';
     } else if (isCancelled) {
       dataState = 'CANCELLED';
-    } else if (isNotStarted || operationalStatus === 'PLATFORM_BOARDING') {
+    } else if (isNotStarted) {
       dataState = 'SCHEDULED';
     } else if (operationalStatus === 'TERMINATED') {
       dataState = 'TERMINATED';
     } else if (isStale) {
       dataState = 'STALE';
-    } else if (operationalStatus === 'IN_TRANSIT' && typeof lat === 'number' && typeof lng === 'number' && currentStationCode !== 'UNKNOWN') {
+    } else if ((operationalStatus === 'IN_TRANSIT' || operationalStatus === 'PLATFORM_BOARDING') && typeof lat === 'number' && typeof lng === 'number' && currentStationCode !== 'UNKNOWN') {
       dataState = 'LIVE';
     } else if (operationalStatus === 'IN_TRANSIT') {
       dataState = 'UNAVAILABLE';
@@ -563,6 +699,22 @@ export class RailkitService {
       this.scheduleCache.set(trainNumber, schedule);
     }
 
+    const sectionalSpeed = (() => {
+      const tNum = String(trainNumber);
+      if (tNum.startsWith('224')) return 85;
+      if (tNum.startsWith('120')) return 75;
+      if (tNum.startsWith('124') || tNum.startsWith('129')) return 65;
+      if (tNum.startsWith('110') || tNum.startsWith('152') || tNum.startsWith('157') || tNum.startsWith('130')) return 58;
+      if (tNum.startsWith('146') || tNum.startsWith('182')) return 52;
+      if (tNum.startsWith('546') || tNum.startsWith('746') || tNum.startsWith('046') || tNum.startsWith('069')) return 45;
+      return (avgSpeed && avgSpeed >= 45 && avgSpeed <= 90) ? avgSpeed : 55;
+    })();
+
+    const hasLiveSpeed = typeof data.currentLocation?.speedKmh === 'number' && data.currentLocation.speedKmh > 0;
+    const computedSpeed = (operationalStatus === 'TERMINATED' || isNotStarted || operationalStatus === 'PLATFORM_BOARDING')
+      ? 0
+      : (hasLiveSpeed ? data.currentLocation.speedKmh : sectionalSpeed);
+
     return {
       id: trainNumber,
       number: trainNumber,
@@ -574,20 +726,11 @@ export class RailkitService {
       corridorId,
       direction,
       // Accuracy rules: Journey average speed is NOT live speed
-      speedKmH: (operationalStatus === 'TERMINATED' || isNotStarted) ? 0 : null,
-      hasLiveSpeedMeasurement: false,
-      speedSource: 'UNAVAILABLE',
-      liveSpeedKmH: null,
-      sectionalSpeedKmH: (() => {
-        const tNum = String(trainNumber);
-        if (tNum.startsWith('224')) return 85;
-        if (tNum.startsWith('120')) return 75;
-        if (tNum.startsWith('124') || tNum.startsWith('129')) return 65;
-        if (tNum.startsWith('110') || tNum.startsWith('152') || tNum.startsWith('157') || tNum.startsWith('130')) return 58;
-        if (tNum.startsWith('146') || tNum.startsWith('182')) return 52;
-        if (tNum.startsWith('546') || tNum.startsWith('746') || tNum.startsWith('046') || tNum.startsWith('069')) return 45;
-        return (avgSpeed && avgSpeed >= 45 && avgSpeed <= 90) ? avgSpeed : 55;
-      })(),
+      speedKmH: computedSpeed,
+      hasLiveSpeedMeasurement: Boolean(operationalStatus === 'PLATFORM_BOARDING' || operationalStatus === 'TERMINATED' || isNotStarted || hasLiveSpeed),
+      speedSource: hasLiveSpeed ? 'PROVIDER_LIVE_SPEED' : (operationalStatus === 'PLATFORM_BOARDING' ? 'AT_STATION_PLATFORM' : 'SECTIONAL_TIMETABLE'),
+      liveSpeedKmH: hasLiveSpeed ? data.currentLocation.speedKmh : (operationalStatus === 'PLATFORM_BOARDING' ? 0 : null),
+      sectionalSpeedKmH: sectionalSpeed,
       currentCoordIndex: null,
       lat: (typeof lat === 'number') ? Number(lat.toFixed(6)) : null,
       lng: (typeof lng === 'number') ? Number(lng.toFixed(6)) : null,
@@ -647,7 +790,7 @@ export class RailkitService {
 
       // Hub 1: Amritsar Junction (all 4 corridors radiate from ASR)
       try {
-        const asrRes = await withTimeout(railkit.liveAtStation('ASR', 4), 6000, 'RailKit liveAtStation ASR timeout');
+        const asrRes = await withTimeout(railkit.liveAtStation('ASR', 4), 15000, 'RailKit liveAtStation ASR timeout');
         if (asrRes && asrRes.success && asrRes.data && Array.isArray(asrRes.data.trains)) {
           for (const t of asrRes.data.trains) {
             const num = String(t.trainNo || '').trim();
@@ -671,14 +814,23 @@ export class RailkitService {
               }
             }
           }
+        } else {
+          // If ASR query timed out or failed, keep existing discovered trains to prevent drop-off flapping
+          if (this.discoveredTrainNumbers && this.discoveredTrainNumbers.length > 0) {
+            this.discoveredTrainNumbers.forEach(n => discoveredSet.add(n));
+          }
         }
       } catch (asrErr) {
         console.warn('[RailKit] ASR hub discovery warning:', asrErr.message);
+        // On exception / timeout, retain previous discovered trains
+        if (this.discoveredTrainNumbers && this.discoveredTrainNumbers.length > 0) {
+          this.discoveredTrainNumbers.forEach(n => discoveredSet.add(n));
+        }
       }
 
       // Hub 2: Tarn Taran (captures branch line services between Khemkaran & Tarn Taran)
       try {
-        const ttoRes = await withTimeout(railkit.liveAtStation('TTO', 4), 6000, 'RailKit liveAtStation TTO timeout');
+        const ttoRes = await withTimeout(railkit.liveAtStation('TTO', 4), 12000, 'RailKit liveAtStation TTO timeout');
         if (ttoRes && ttoRes.success && ttoRes.data && Array.isArray(ttoRes.data.trains)) {
           for (const t of ttoRes.data.trains) {
             const num = String(t.trainNo || '').trim();
@@ -707,13 +859,32 @@ export class RailkitService {
         console.warn('[RailKit] TTO hub discovery warning:', ttoErr.message);
       }
 
-      // If late-night or low-frequency window has 0 trains, fallback to core corridor passenger services
-      if (discoveredSet.size === 0) {
-        const SECTOR_PRIMARY_TRAINS = ['12014', '12029', '11058', '12460', '14632', '18238'];
-        SECTOR_PRIMARY_TRAINS.forEach(num => discoveredSet.add(num));
-      }
+      if (records.length > 0) {
+        // Prioritize trains by urgency relative to current time (running/departing/arriving in 0-60 min first)
+        const nowDate = new Date();
+        const currentMins = nowDate.getHours() * 60 + nowDate.getMinutes();
+        const parseTimeToMins = (str) => {
+          if (!str || typeof str !== 'string') return 9999;
+          const m = str.match(/(\d{1,2}):(\d{2})/);
+          if (!m) return 9999;
+          let mins = parseInt(m[1]) * 60 + parseInt(m[2]);
+          if (mins < currentMins - 120) mins += 1440; // overnight wrap
+          return mins;
+        };
 
-      if (discoveredSet.size > 0) {
+        records.sort((a, b) => {
+          const timeA = Math.min(parseTimeToMins(a.depActual), parseTimeToMins(a.arrActual));
+          const timeB = Math.min(parseTimeToMins(b.depActual), parseTimeToMins(b.arrActual));
+          return Math.abs(timeA - currentMins) - Math.abs(timeB - currentMins);
+        });
+
+        const prioritizedNumbers = records.map(r => r.trainNumber);
+        this.discoveredTrainNumbers = prioritizedNumbers;
+        this.discoveredTrainRecords = records;
+        this.lastDiscoveryTimestamp = now;
+        this.status = 'CONNECTED';
+        this.lastSuccessfulSync = new Date().toISOString();
+      } else if (discoveredSet.size > 0) {
         this.discoveredTrainNumbers = Array.from(discoveredSet);
         this.discoveredTrainRecords = records;
         this.lastDiscoveryTimestamp = now;
@@ -750,7 +921,18 @@ export class RailkitService {
       try {
         // 1. Automatically discover all active trains arriving or departing within the 4-hour window
         const discoveredNumbers = await this.discoverActiveTrains(force);
-        if (!discoveredNumbers || discoveredNumbers.length === 0) {
+        
+        // Combine newly discovered hub trains with any in-memory trains currently flagged in-sector
+        // This ensures trains that departed earlier (like #22488 now at Ambala) are verified and flagged OUT_OF_SECTOR
+        const candidateSet = new Set(discoveredNumbers || []);
+        this.validatedTrainsMap.forEach((existingTrain, trainKey) => {
+          if (existingTrain && (existingTrain.isWithinAmritsarSector || existingTrain.status === 'IN_TRANSIT')) {
+            candidateSet.add(trainKey);
+          }
+        });
+        const candidateNumbers = Array.from(candidateSet);
+
+        if (candidateNumbers.length === 0) {
           if (!this.isQuotaExhausted && !this.isAuthError) {
             this.status = 'CONNECTED';
             this.lastSuccessfulSync = new Date().toISOString();
@@ -761,7 +943,7 @@ export class RailkitService {
         const now = Date.now();
         // Intelligent Credit Conservation:
         // Do NOT poll terminated/cancelled trains or trains deep outside sector every cycle.
-        const trainNumbersToQuery = discoveredNumbers.filter(num => {
+        const trainNumbersToQuery = candidateNumbers.filter(num => {
           const existing = this.validatedTrainsMap.get(num);
           if (!existing) return true; // Newly discovered: query once
           if (existing.status === 'TERMINATED' || existing.status === 'CANCELLED') {
