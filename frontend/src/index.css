@@ -4,7 +4,6 @@
    Tagline: "Know Before the Fatak Closes."
    ========================================================================== */
 
-@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
 @import "leaflet/dist/leaflet.css";
 
 :root,
@@ -1251,11 +1250,45 @@ html, body, .app-shell, .app-main, .page-container, .panel, .panel-elevated, .ca
   @keyframes waterWaveMotion {
     0%, 100% { background-position: 50% 50%; }
   }
-  @keyframes timerWaitBreath {
-    0%, 100% { opacity: 1; transform: none; }
+}
+/* ==========================================================================
+   SKELETON LOADING & PERFORMANCE OPTIMIZATIONS
+   ========================================================================== */
+.skeleton-box {
+  background: linear-gradient(
+    90deg,
+    rgba(56, 189, 248, 0.05) 25%,
+    rgba(56, 189, 248, 0.14) 50%,
+    rgba(56, 189, 248, 0.05) 75%
+  );
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.8s infinite ease-in-out;
+  display: inline-block;
+  will-change: background-position;
+}
+
+[data-theme="light"] .skeleton-box {
+  background: linear-gradient(
+    90deg,
+    rgba(0, 0, 0, 0.04) 25%,
+    rgba(0, 0, 0, 0.09) 50%,
+    rgba(0, 0, 0, 0.04) 75%
+  );
+  background-size: 200% 100%;
+}
+
+@keyframes skeleton-shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
   }
 }
 
-
-
-
+@media (prefers-reduced-motion: reduce) {
+  .skeleton-box {
+    animation: none;
+    opacity: 0.6;
+  }
+}

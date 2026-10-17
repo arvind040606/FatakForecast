@@ -1,24 +1,29 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, lazy, Suspense } from 'react';
 import { Navbar } from './components/Navbar';
 import { Sidebar } from './components/Sidebar';
 import { BottomNav } from './components/BottomNav';
-import { CrossingDetailPanel } from './components/CrossingDetailPanel';
-import { TrainScheduleModal } from './components/TrainScheduleModal';
-import { LocationOnboardingModal } from './components/LocationOnboardingModal';
-import { CrossingSurveyModal } from './components/CrossingSurveyModal';
-import { UserSurveysModal } from './components/UserSurveysModal';
 import { geofenceService } from './services/geofenceService';
 
 import { HomeView } from './views/HomeView';
 import { CrossingsView } from './views/CrossingsView';
-import { UpcomingClosuresView } from './views/UpcomingClosuresView';
-import { TrainMovementsView } from './views/TrainMovementsView';
-import { AnalyticsView } from './views/AnalyticsView';
-import { DataHealthView } from './views/DataHealthView';
-import { JourneyPlannerView } from './views/JourneyPlannerView';
-import { SavedPlacesView } from './views/SavedPlacesView';
-import { NotificationsView } from './views/NotificationsView';
-import { SettingsView } from './views/SettingsView';
+
+// Code-split non-critical routes to eliminate 500KB+ from initial bundle
+const UpcomingClosuresView = lazy(() => import('./views/UpcomingClosuresView').then(m => ({ default: m.UpcomingClosuresView })));
+const TrainMovementsView = lazy(() => import('./views/TrainMovementsView').then(m => ({ default: m.TrainMovementsView })));
+const AnalyticsView = lazy(() => import('./views/AnalyticsView').then(m => ({ default: m.AnalyticsView })));
+const DataHealthView = lazy(() => import('./views/DataHealthView').then(m => ({ default: m.DataHealthView })));
+const JourneyPlannerView = lazy(() => import('./views/JourneyPlannerView').then(m => ({ default: m.JourneyPlannerView })));
+const SavedPlacesView = lazy(() => import('./views/SavedPlacesView').then(m => ({ default: m.SavedPlacesView })));
+const NotificationsView = lazy(() => import('./views/NotificationsView').then(m => ({ default: m.NotificationsView })));
+const SettingsView = lazy(() => import('./views/SettingsView').then(m => ({ default: m.SettingsView })));
+
+// Lazy-loaded interactive modals (deferred until user opens them)
+const CrossingDetailPanel = lazy(() => import('./components/CrossingDetailPanel').then(m => ({ default: m.CrossingDetailPanel })));
+const TrainScheduleModal = lazy(() => import('./components/TrainScheduleModal').then(m => ({ default: m.TrainScheduleModal })));
+const LocationOnboardingModal = lazy(() => import('./components/LocationOnboardingModal').then(m => ({ default: m.LocationOnboardingModal })));
+const CrossingSurveyModal = lazy(() => import('./components/CrossingSurveyModal').then(m => ({ default: m.CrossingSurveyModal })));
+const UserSurveysModal = lazy(() => import('./components/UserSurveysModal').then(m => ({ default: m.UserSurveysModal })));
+const CinematicIntro = lazy(() => import('./components/CinematicIntro').then(m => ({ default: m.CinematicIntro })));
 
 import { 
   ActiveRoute, 
@@ -41,8 +46,20 @@ import { WifiOff, RefreshCw } from 'lucide-react';
 import { findImpactingTrainForCrossing } from './utils/trainHelpers';
 
 import { AnimatePresence } from 'framer-motion';
-import { CinematicIntro } from './components/CinematicIntro';
 import { App as CapApp } from '@capacitor/app';
+
+// Fast skeleton placeholder for lazy-loaded views
+const ViewFallback: React.FC = () => (
+  <div className="page-container" style={{ display: 'flex', flexDirection: 'column', gap: '16px', padding: '16px' }} aria-busy="true">
+    <div className="skeleton-box" style={{ width: '220px', height: '24px', borderRadius: '4px', marginBottom: '8px' }} />
+    <div className="skeleton-box" style={{ width: '100%', height: '140px', borderRadius: 'var(--radius-lg)' }} />
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(280px, 100%), 1fr))', gap: '14px', marginTop: '12px' }}>
+      {[1, 2, 3].map(i => (
+        <div key={i} className="skeleton-box" style={{ width: '100%', height: '180px', borderRadius: 'var(--radius-lg)' }} />
+      ))}
+    </div>
+  </div>
+);
 
 // Map pathnames to valid ActiveRoute
 function getInitialRoute(): ActiveRoute {
@@ -66,7 +83,19 @@ export function App() {
   const [selectedTrain, setSelectedTrain] = useState<SectorTrain | null>(null);
   const [scheduleModalTrain, setScheduleModalTrain] = useState<SectorTrain | null>(null);
   const [isOnline, setIsOnline] = useState<boolean>(true);
-  const [showIntro, setShowIntro] = useState<boolean>(true);
+
+  // Check if commuter already saw intro in current session or on device to eliminate 3.5s block
+  const [showIntro, setShowIntro] = useState<boolean>(() => {
+    try {
+      if (typeof window !== 'undefined' && (
+        sessionStorage.getItem('fatak_intro_seen') === 'true' ||
+        localStorage.getItem('fatak_intro_seen') === 'true'
+      )) {
+        return false;
+      }
+    } catch {}
+    return true;
+  });
 
   // User Location Profile (persisted locally across restarts)
   const [userProfile, setUserProfile] = useState<UserLocationProfile | null>(() => {
@@ -103,12 +132,13 @@ export function App() {
     }
   }, [showIntro]);
 
-  // Live telemetry state
-  const [crossings, setCrossings] = useState<RailwayCrossing[]>(INITIAL_CROSSINGS);
-  const [trains, setTrains] = useState<SectorTrain[]>(INITIAL_TRAINS);
-  const [corridors, setCorridors] = useState<RailwayCorridor[]>(INITIAL_CORRIDORS);
-  const [metrics, setMetrics] = useState<OperationalMetrics>(INITIAL_METRICS);
-  const [lastUpdate, setLastUpdate] = useState<string>(new Date().toISOString());
+  // Synchronous hydration from cached telemetry for instant 0ms initial render
+  const initialPayload = railwayApi.getLastPayload();
+  const [crossings, setCrossings] = useState<RailwayCrossing[]>(initialPayload?.crossings?.length ? initialPayload.crossings : INITIAL_CROSSINGS);
+  const [trains, setTrains] = useState<SectorTrain[]>(initialPayload?.trains?.length ? initialPayload.trains : INITIAL_TRAINS);
+  const [corridors, setCorridors] = useState<RailwayCorridor[]>(initialPayload?.activeCorridors?.length ? initialPayload.activeCorridors : INITIAL_CORRIDORS);
+  const [metrics, setMetrics] = useState<OperationalMetrics>(initialPayload?.metrics || INITIAL_METRICS);
+  const [lastUpdate, setLastUpdate] = useState<string>(initialPayload?.timestamp || new Date().toISOString());
 
   // Geofence proximity monitoring and custom event triggers
   useEffect(() => {
@@ -193,18 +223,7 @@ export function App() {
   };
 
   useEffect(() => {
-    // Initial fetch
-    railwayApi.getCrossings().then(data => {
-      if (data.crossings?.length) setCrossings(data.crossings);
-      if (data.corridors?.length) setCorridors(data.corridors);
-      if (data.metrics) setMetrics(data.metrics);
-    });
-
-    railwayApi.getTrains().then(trainData => {
-      if (Array.isArray(trainData) && trainData.length > 0) setTrains(trainData);
-    });
-
-    // Subscribe to live telemetry stream
+    // Subscribe to live telemetry stream (which handles initial delivery & continuous updates without redundant REST calls)
     const unsubscribe = railwayApi.subscribe((payload: TelemetryPayload) => {
       // Structural sharing for crossings to avoid unnecessary component remounts and re-renders
       setCrossings(prev => {
@@ -416,16 +435,6 @@ export function App() {
             />
           )}
 
-          {currentRoute === '/planner' && (
-            <JourneyPlannerView
-              crossings={crossings}
-              trains={trains}
-              corridors={corridors}
-              onSelectCrossing={handleSelectCrossingAndOpenDetails}
-              onNavigate={navigateTo}
-            />
-          )}
-
           {(currentRoute === '/crossings' || currentRoute === '/forecasts') && (
             <CrossingsView
               crossings={crossings}
@@ -439,44 +448,55 @@ export function App() {
             />
           )}
 
-          {currentRoute === '/trains' && (
-            <TrainMovementsView
-              trains={trains}
-              crossings={crossings}
-              onSelectCrossing={handleSelectCrossingAndOpenDetails}
-              onNavigate={navigateTo}
-            />
-          )}
+          <Suspense fallback={<ViewFallback />}>
+            {currentRoute === '/planner' && (
+              <JourneyPlannerView
+                crossings={crossings}
+                trains={trains}
+                corridors={corridors}
+                onSelectCrossing={handleSelectCrossingAndOpenDetails}
+                onNavigate={navigateTo}
+              />
+            )}
 
+            {currentRoute === '/trains' && (
+              <TrainMovementsView
+                trains={trains}
+                crossings={crossings}
+                onSelectCrossing={handleSelectCrossingAndOpenDetails}
+                onNavigate={navigateTo}
+              />
+            )}
 
-          {currentRoute === '/saved-places' && (
-            <SavedPlacesView
-              crossings={crossings}
-              trains={trains}
-              onNavigate={navigateTo}
-              onSelectCrossing={handleSelectCrossingAndOpenDetails}
-            />
-          )}
+            {currentRoute === '/saved-places' && (
+              <SavedPlacesView
+                crossings={crossings}
+                trains={trains}
+                onNavigate={navigateTo}
+                onSelectCrossing={handleSelectCrossingAndOpenDetails}
+              />
+            )}
 
-          {currentRoute === '/notifications' && (
-            <NotificationsView
-              onNavigate={navigateTo}
-            />
-          )}
+            {currentRoute === '/notifications' && (
+              <NotificationsView
+                onNavigate={navigateTo}
+              />
+            )}
 
-          {currentRoute === '/data-health' && (
-            <DataHealthView metrics={metrics} />
-          )}
+            {currentRoute === '/data-health' && (
+              <DataHealthView metrics={metrics} />
+            )}
 
-          {currentRoute === '/settings' && (
-            <SettingsView
-              onNavigate={navigateTo}
-            />
-          )}
+            {currentRoute === '/settings' && (
+              <SettingsView
+                onNavigate={navigateTo}
+              />
+            )}
 
-          {currentRoute === '/analytics' && (
-            <AnalyticsView />
-          )}
+            {currentRoute === '/analytics' && (
+              <AnalyticsView />
+            )}
+          </Suspense>
         </div>
 
         {/* MOBILE ANDROID BOTTOM NAVIGATION BAR */}
@@ -487,74 +507,83 @@ export function App() {
         />
       </div>
 
-      {/* CROSSING DETAIL OVERLAY PANEL */}
-      <AnimatePresence>
-        {selectedCrossing && (
-          <CrossingDetailPanel
-            crossing={selectedCrossing}
-            corridors={corridors}
-            trains={trains}
-            onClose={() => setSelectedCrossing(null)}
-            onOpenSurvey={(c) => setSurveyCrossing(c)}
+      {/* LAZY LOADED MODALS & OVERLAYS */}
+      <Suspense fallback={null}>
+        {/* CROSSING DETAIL OVERLAY PANEL */}
+        <AnimatePresence>
+          {selectedCrossing && (
+            <CrossingDetailPanel
+              crossing={selectedCrossing}
+              corridors={corridors}
+              trains={trains}
+              onClose={() => setSelectedCrossing(null)}
+              onOpenSurvey={(c) => setSurveyCrossing(c)}
+            />
+          )}
+        </AnimatePresence>
+
+        {/* TRAIN SCHEDULE MODAL */}
+        {scheduleModalTrain && (
+          <TrainScheduleModal
+            isOpen={true}
+            train={scheduleModalTrain}
+            onClose={() => setScheduleModalTrain(null)}
           />
         )}
-      </AnimatePresence>
 
-      {/* TRAIN SCHEDULE MODAL */}
-      {scheduleModalTrain && (
-        <TrainScheduleModal
-          isOpen={true}
-          train={scheduleModalTrain}
-          onClose={() => setScheduleModalTrain(null)}
-        />
-      )}
+        {/* CINEMATIC APPLICATION INTRODUCTION (INITIAL LAUNCH ONLY) */}
+        {showIntro && (
+          <CinematicIntro
+            onComplete={() => {
+              try {
+                sessionStorage.setItem('fatak_intro_seen', 'true');
+                localStorage.setItem('fatak_intro_seen', 'true');
+              } catch {}
+              setShowIntro(false);
+              if (!nativeService.isLocationOnboarded()) {
+                setShowLocationModal(true);
+              }
+            }}
+          />
+        )}
 
+        {/* LOCATION ONBOARDING & PREFERENCES MODAL */}
+        {showLocationModal && (
+          <LocationOnboardingModal
+            isOpen={showLocationModal}
+            onClose={() => setShowLocationModal(false)}
+            crossings={crossings}
+            trains={trains}
+            existingProfile={userProfile}
+            onSaveProfile={(saved) => {
+              setUserProfile(saved);
+              setShowLocationModal(false);
+            }}
+            isInitialOnboarding={!userProfile}
+          />
+        )}
 
-      {/* CINEMATIC APPLICATION INTRODUCTION (INITIAL LAUNCH ONLY) */}
-      {showIntro && (
-        <CinematicIntro
-          onComplete={() => {
-            try {
-              sessionStorage.setItem('fatak_intro_seen', 'true');
-            } catch {}
-            setShowIntro(false);
-            if (!nativeService.isLocationOnboarded()) {
-              setShowLocationModal(true);
-            }
-          }}
-        />
-      )}
+        {/* CROWDSOURCED CROSSING SURVEY MODAL */}
+        {surveyCrossing && (
+          <CrossingSurveyModal
+            isOpen={!!surveyCrossing}
+            crossings={crossings}
+            crossing={surveyCrossing}
+            onClose={() => setSurveyCrossing(null)}
+            onSuccess={() => {
+              setSurveyCrossing(null);
+            }}
+          />
+        )}
 
-      {/* LOCATION ONBOARDING & PREFERENCES MODAL */}
-      <LocationOnboardingModal
-        isOpen={showLocationModal}
-        onClose={() => setShowLocationModal(false)}
-        crossings={crossings}
-        trains={trains}
-        existingProfile={userProfile}
-        onSaveProfile={(saved) => {
-          setUserProfile(saved);
-          setShowLocationModal(false);
-        }}
-        isInitialOnboarding={!userProfile}
-      />
-
-      {/* CROWDSOURCED CROSSING SURVEY MODAL */}
-      <CrossingSurveyModal
-        isOpen={!!surveyCrossing}
-        crossings={crossings}
-        crossing={surveyCrossing}
-        onClose={() => setSurveyCrossing(null)}
-        onSuccess={() => {
-          setSurveyCrossing(null);
-        }}
-      />
-
-      {/* USER SURVEY HISTORY MODAL */}
-      <UserSurveysModal
-        isOpen={showUserSurveysModal}
-        onClose={() => setShowUserSurveysModal(false)}
-      />
+        {/* USER SURVEY HISTORY MODAL */}
+        {showUserSurveysModal && (
+          <UserSurveysModal
+            isOpen={showUserSurveysModal}
+            onClose={() => setShowUserSurveysModal(false)}
+          />
+        )}
+      </Suspense>
     </div>
   );
 }

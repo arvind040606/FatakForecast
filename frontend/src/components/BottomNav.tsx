@@ -30,7 +30,7 @@ interface BottomNavProps {
   onPlayIntro?: () => void;
 }
 
-export const BottomNav: React.FC<BottomNavProps> = ({
+const BottomNavComponent: React.FC<BottomNavProps> = ({
   currentRoute,
   onRouteChange,
   metrics
@@ -329,3 +329,6 @@ export const BottomNav: React.FC<BottomNavProps> = ({
     </>
   );
 };
+
+export const BottomNav = React.memo(BottomNavComponent);
+export default BottomNav;

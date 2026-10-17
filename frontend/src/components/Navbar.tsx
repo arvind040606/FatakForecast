@@ -18,7 +18,7 @@ interface NavbarProps {
   onChangeLocation?: () => void;
 }
 
-export const Navbar: React.FC<NavbarProps> = ({
+const NavbarComponent: React.FC<NavbarProps> = ({
   metrics,
   lastUpdateTimestamp,
   userProfile,
@@ -251,7 +251,9 @@ export const Navbar: React.FC<NavbarProps> = ({
             minWidth: '38px',
             textAlign: 'right'
           }}>
-            {connDetails.latencyMs != null ? `${connDetails.latencyMs}ms` : (connDetails.state === 'CONNECTING' ? '...' : `${secondsAgo}s`)}
+            {connDetails.latencyMs != null 
+              ? (connDetails.latencyMs >= 1000 ? `${(connDetails.latencyMs / 1000).toFixed(1)}s` : `${connDetails.latencyMs}ms`) 
+              : (connDetails.state === 'CONNECTING' ? '...' : `${secondsAgo}s`)}
           </span>
         </div>
 
@@ -289,3 +291,6 @@ export const Navbar: React.FC<NavbarProps> = ({
     </header>
   );
 };
+
+export const Navbar = React.memo(NavbarComponent);
+export default Navbar;

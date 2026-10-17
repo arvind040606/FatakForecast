@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, memo } from 'react';
 import { 
   Search, 
   MapPin, 
@@ -20,6 +20,7 @@ import { haversineDistanceMeters, formatDistance, getCrossingDataFreshness } fro
 import { nativeService } from '../services/nativeService';
 import { railwayApi } from '../services/apiService';
 import { CrossingCard } from '../components/CrossingCard';
+import { CrossingCardSkeleton } from '../components/CrossingCardSkeleton';
 
 interface CrossingsViewProps {
   crossings: RailwayCrossing[];
@@ -34,7 +35,7 @@ interface CrossingsViewProps {
   onChangeLocation?: () => void;
 }
 
-export const CrossingsView: React.FC<CrossingsViewProps> = ({
+const CrossingsViewComponent: React.FC<CrossingsViewProps> = ({
   crossings,
   trains,
   corridors,
@@ -88,87 +89,106 @@ export const CrossingsView: React.FC<CrossingsViewProps> = ({
   };
 
 
-  const closedCount = crossings.filter(c => c.status === 'CLOSURE_EXPECTED' || c.status === 'CLOSED' || c.status === 'CLOSURE_REPORTED').length;
-  const approachCount = crossings.filter(c => c.status === 'APPROACHING').length;
-  const openCount = crossings.filter(c => c.status === 'OPEN').length;
-  const unknownCount = crossings.filter(c => c.status === 'UNKNOWN').length;
+  // Quantize timer to minute epoch for sorting so cards remain perfectly stable without churning every second
+  const minuteEpoch = Math.floor(now / 60000);
 
-  const filtered = crossings.filter(c => {
-    const isClosed = c.status === 'CLOSURE_EXPECTED' || c.status === 'CLOSED' || c.status === 'CLOSURE_REPORTED';
-    const matchStatus = filterStatus === 'ALL' || 
-      (filterStatus === 'CLOSURE_EXPECTED' ? isClosed : c.status === filterStatus);
-    const matchVerification = filterVerification === 'ALL' || 
-      (filterVerification === 'VERIFIED' && c.verificationStatus === 'VERIFIED_MAPPED_CROSSING') ||
-      (filterVerification === 'PENDING' && c.verificationStatus === 'REQUIRES_FIELD_VERIFICATION');
+  const { filtered, sorted, counts } = useMemo(() => {
+    let closedCount = 0;
+    let approachCount = 0;
+    let openCount = 0;
+    let unknownCount = 0;
 
-    const matchSearch = c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                        c.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                        (c.punjabiName && c.punjabiName.includes(searchQuery)) ||
-                        (c.roadClassification && c.roadClassification.toLowerCase().includes(searchQuery.toLowerCase()));
-    return matchStatus && matchVerification && matchSearch;
-  });
+    const filteredList: RailwayCrossing[] = [];
+    const q = searchQuery.toLowerCase().trim();
 
-  const handleToggleFavorite = useCallback(async (crossingId: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    await nativeService.toggleFavoriteCrossing(crossingId);
-    setFavIds(nativeService.getFavoriteCrossingIds());
-  }, []);
+    for (const c of crossings) {
+      const isClosed = c.status === 'CLOSURE_EXPECTED' || c.status === 'CLOSED' || c.status === 'CLOSURE_REPORTED';
+      if (isClosed) closedCount++;
+      else if (c.status === 'APPROACHING') approachCount++;
+      else if (c.status === 'OPEN') openCount++;
+      else unknownCount++;
 
-  const sorted = [...filtered].sort((a, b) => {
-    if (sortBy === 'name') {
-      const nameDiff = a.name.localeCompare(b.name);
-      if (nameDiff !== 0) return nameDiff;
-      return a.id.localeCompare(b.id);
-    }
-    if (sortBy === 'id') return a.id.localeCompare(b.id);
-    if (sortBy === 'distance' && userProfile) {
-      const distA = haversineDistanceMeters(userProfile.lat, userProfile.lng, a.lat, a.lng);
-      const distB = haversineDistanceMeters(userProfile.lat, userProfile.lng, b.lat, b.lng);
-      // Suppress sub-25m GPS jitter from constantly flipping nearby cards
-      if (Math.abs(distA - distB) > 25) return distA - distB;
-      return a.name.localeCompare(b.name);
-    }
-    
-    // Sort by closure urgency with strictly deterministic, stable tie-breakers
-    const getUrgencyScore = (c: RailwayCrossing): number => {
-      if (c.activeDrill || c.observedPhysicalGateState === 'CLOSED' || c.status === 'CLOSED' || c.status === 'CLOSURE_REPORTED') return 5;
-      if (c.status === 'CLOSURE_EXPECTED') return 4;
-      if (c.status === 'APPROACHING') return 3;
-      if (c.countdownAvailable && c.timeToNextClosureSec > 0) return 2;
-      if ((c as any).upcomingTrain || (c as any).corridorTrain) return 1;
-      return 0;
-    };
+      const matchStatus = filterStatus === 'ALL' || 
+        (filterStatus === 'CLOSURE_EXPECTED' ? isClosed : c.status === filterStatus);
+      const matchVerification = filterVerification === 'ALL' || 
+        (filterVerification === 'VERIFIED' && c.verificationStatus === 'VERIFIED_MAPPED_CROSSING') ||
+        (filterVerification === 'PENDING' && c.verificationStatus === 'REQUIRES_FIELD_VERIFICATION');
 
-    const scoreA = getUrgencyScore(a);
-    const scoreB = getUrgencyScore(b);
-    if (scoreA !== scoreB) {
-      return scoreB - scoreA; // Higher urgency on top
-    }
+      const matchSearch = !q ||
+        c.name.toLowerCase().includes(q) ||
+        c.id.toLowerCase().includes(q) ||
+        (c.punjabiName && c.punjabiName.toLowerCase().includes(q)) ||
+        (c.roadClassification && c.roadClassification.toLowerCase().includes(q));
 
-    // Within same closure urgency tier, sort by anchored closure timestamp
-    // Quantized into 60-second windows with deterministic tie-breaking to prevent cards from swapping on minor telemetry refreshes
-    if (scoreA >= 1) {
-      const timeA = getAuthoritativeTargetEpoch(a, 'closure', now) || (a.estimatedGateClosingTime ? new Date(a.estimatedGateClosingTime).getTime() : 0);
-      const timeB = getAuthoritativeTargetEpoch(b, 'closure', now) || (b.estimatedGateClosingTime ? new Date(b.estimatedGateClosingTime).getTime() : 0);
-      
-      if (timeA > 0 && timeB > 0) {
-        const windowA = Math.floor(timeA / 60000);
-        const windowB = Math.floor(timeB / 60000);
-        if (windowA !== windowB) {
-          return windowA - windowB;
-        }
-      } else if (timeA > 0 && timeB === 0) {
-        return -1;
-      } else if (timeA === 0 && timeB > 0) {
-        return 1;
+      if (matchStatus && matchVerification && matchSearch) {
+        filteredList.push(c);
       }
     }
 
-    // Fully deterministic stable tie-breaker by name and permanent node ID
-    const nameDiff = a.name.localeCompare(b.name);
-    if (nameDiff !== 0) return nameDiff;
-    return a.id.localeCompare(b.id);
-  });
+    const sortedList = [...filteredList].sort((a, b) => {
+      if (sortBy === 'name') {
+        const nameDiff = a.name.localeCompare(b.name);
+        if (nameDiff !== 0) return nameDiff;
+        return a.id.localeCompare(b.id);
+      }
+      if (sortBy === 'id') return a.id.localeCompare(b.id);
+      if (sortBy === 'distance' && userProfile) {
+        const distA = haversineDistanceMeters(userProfile.lat, userProfile.lng, a.lat, a.lng);
+        const distB = haversineDistanceMeters(userProfile.lat, userProfile.lng, b.lat, b.lng);
+        // Suppress sub-25m GPS jitter from constantly flipping nearby cards
+        if (Math.abs(distA - distB) > 25) return distA - distB;
+        return a.name.localeCompare(b.name);
+      }
+      
+      // Sort by closure urgency with strictly deterministic, stable tie-breakers
+      const getUrgencyScore = (c: RailwayCrossing): number => {
+        if (c.activeDrill || c.observedPhysicalGateState === 'CLOSED' || c.status === 'CLOSED' || c.status === 'CLOSURE_REPORTED') return 5;
+        if (c.status === 'CLOSURE_EXPECTED') return 4;
+        if (c.status === 'APPROACHING') return 3;
+        if (c.countdownAvailable && c.timeToNextClosureSec > 0) return 2;
+        if ((c as any).upcomingTrain || (c as any).corridorTrain) return 1;
+        return 0;
+      };
+
+      const scoreA = getUrgencyScore(a);
+      const scoreB = getUrgencyScore(b);
+      if (scoreA !== scoreB) {
+        return scoreB - scoreA; // Higher urgency on top
+      }
+
+      // Within same closure urgency tier, sort by anchored closure timestamp
+      // Quantized into 60-second windows with deterministic tie-breaking to prevent cards from swapping on minor telemetry refreshes
+      if (scoreA >= 1) {
+        const timeA = getAuthoritativeTargetEpoch(a, 'closure', now) || (a.estimatedGateClosingTime ? new Date(a.estimatedGateClosingTime).getTime() : 0);
+        const timeB = getAuthoritativeTargetEpoch(b, 'closure', now) || (b.estimatedGateClosingTime ? new Date(b.estimatedGateClosingTime).getTime() : 0);
+        
+        if (timeA > 0 && timeB > 0) {
+          const windowA = Math.floor(timeA / 60000);
+          const windowB = Math.floor(timeB / 60000);
+          if (windowA !== windowB) {
+            return windowA - windowB;
+          }
+        } else if (timeA > 0 && timeB === 0) {
+          return -1;
+        } else if (timeA === 0 && timeB > 0) {
+          return 1;
+        }
+      }
+
+      // Fully deterministic stable tie-breaker by name and permanent node ID
+      const nameDiff = a.name.localeCompare(b.name);
+      if (nameDiff !== 0) return nameDiff;
+      return a.id.localeCompare(b.id);
+    });
+
+    return {
+      filtered: filteredList,
+      sorted: sortedList,
+      counts: { closedCount, approachCount, openCount, unknownCount }
+    };
+  }, [crossings, filterStatus, filterVerification, searchQuery, sortBy, userProfile?.lat, userProfile?.lng, minuteEpoch]);
+
+  const { closedCount, approachCount, openCount, unknownCount } = counts;
 
   const handleCopy = (c: RailwayCrossing, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -176,6 +196,12 @@ export const CrossingsView: React.FC<CrossingsViewProps> = ({
     setCopiedId(c.id);
     setTimeout(() => setCopiedId(null), 2000);
   };
+
+  const handleToggleFavorite = useCallback(async (crossingId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    await nativeService.toggleFavoriteCrossing(crossingId);
+    setFavIds(nativeService.getFavoriteCrossingIds());
+  }, []);
 
   const getStatusBadge = (crossing: RailwayCrossing) => {
     if (crossing.activeDrill || crossing.closureReported || crossing.observedPhysicalGateState === 'CLOSED') {
@@ -446,30 +472,70 @@ export const CrossingsView: React.FC<CrossingsViewProps> = ({
 
       {/* CARDS VIEW (DEFAULT ACROSS ALL SCREENS) */}
       {viewMode === 'cards' && (
-        <div style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fill, minmax(min(320px, 100%), 1fr))',
-          gap: '16px',
-          marginBottom: '24px'
-        }}>
-          {sorted.map(crossing => {
-            const distM = userProfile ? haversineDistanceMeters(userProfile.lat, userProfile.lng, crossing.lat, crossing.lng) : null;
-            const userDistance = distM !== null ? `${formatDistance(distM)} away` : null;
+        crossings.length === 0 ? (
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fill, minmax(min(320px, 100%), 1fr))',
+            gap: '16px',
+            marginBottom: '24px'
+          }}>
+            {[1, 2, 3, 4, 5, 6].map(i => (
+              <CrossingCardSkeleton key={i} />
+            ))}
+          </div>
+        ) : sorted.length === 0 ? (
+          <div style={{
+            backgroundColor: 'var(--bg-surface)',
+            border: '1px solid var(--border-soft)',
+            borderRadius: 'var(--radius-lg)',
+            padding: '36px 20px',
+            textAlign: 'center',
+            marginBottom: '24px'
+          }}>
+            <div style={{ fontSize: '15px', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '6px' }}>
+              No level crossings match your filter
+            </div>
+            <p style={{ fontSize: '13px', color: 'var(--text-secondary)', margin: '0 0 16px 0', maxWidth: '420px', marginInline: 'auto' }}>
+              {searchQuery ? `No crossing matched "${searchQuery}".` : 'No crossing found under current status or verification filter.'}
+            </p>
+            <button
+              onClick={() => {
+                setSearchQuery('');
+                setFilterStatus('ALL');
+                setFilterVerification('ALL');
+              }}
+              className="btn btn-secondary"
+              style={{ fontSize: '12px', padding: '6px 14px' }}
+            >
+              Reset Filters
+            </button>
+          </div>
+        ) : (
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fill, minmax(min(320px, 100%), 1fr))',
+            gap: '16px',
+            marginBottom: '24px'
+          }}>
+            {sorted.map(crossing => {
+              const distM = userProfile ? haversineDistanceMeters(userProfile.lat, userProfile.lng, crossing.lat, crossing.lng) : null;
+              const userDistance = distM !== null ? `${formatDistance(distM)} away` : null;
 
-            return (
-              <CrossingCard
-                key={crossing.id}
-                crossing={crossing}
-                trains={trains}
-                now={now}
-                userDistance={userDistance}
-                isFavorite={favIds.includes(crossing.id)}
-                onToggleFavorite={handleToggleFavorite}
-                onSelect={onSelectCrossing}
-              />
-            );
-          })}
-        </div>
+              return (
+                <CrossingCard
+                  key={crossing.id}
+                  crossing={crossing}
+                  trains={trains}
+                  now={now}
+                  userDistance={userDistance}
+                  isFavorite={favIds.includes(crossing.id)}
+                  onToggleFavorite={handleToggleFavorite}
+                  onSelect={onSelectCrossing}
+                />
+              );
+            })}
+          </div>
+        )
       )}
 
       {/* TABLE VIEW (OPTION FOR DESKTOP) */}
@@ -628,3 +694,6 @@ export const CrossingsView: React.FC<CrossingsViewProps> = ({
     </div>
   );
 };
+
+export const CrossingsView = memo(CrossingsViewComponent);
+export default CrossingsView;

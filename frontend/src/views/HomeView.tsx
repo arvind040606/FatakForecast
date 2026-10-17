@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, memo } from 'react';
 import { 
   MapPin, 
   Compass, 
@@ -37,7 +37,7 @@ interface HomeViewProps {
   onSelectCrossing: (crossing: RailwayCrossing) => void;
 }
 
-export const HomeView: React.FC<HomeViewProps> = ({
+const HomeViewComponent: React.FC<HomeViewProps> = ({
   metrics,
   crossings,
   trains,
@@ -71,7 +71,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
   }, []);
 
   // Determine current commuter reference location (GPS hardware > selected landmark > user profile > central Amritsar)
-  const userLoc: [number, number] = (() => {
+  const userLoc: [number, number] = useMemo(() => {
     if (gpsPos) return [gpsPos.lat, gpsPos.lng];
     if (manualLandmarkId) {
       const lm = AMRITSAR_LANDMARKS.find(l => l.id === manualLandmarkId);
@@ -80,9 +80,9 @@ export const HomeView: React.FC<HomeViewProps> = ({
     const prof = nativeService.getUserLocationProfile();
     if (prof) return [prof.lat, prof.lng];
     return [31.6338, 74.8655]; // Amritsar Jn default
-  })();
+  }, [gpsPos, manualLandmarkId]);
 
-  const nearestData = (() => {
+  const nearestData = useMemo(() => {
     if (!crossings || crossings.length === 0) return null;
     let closest = crossings[0];
     let minD = Infinity;
@@ -96,7 +96,22 @@ export const HomeView: React.FC<HomeViewProps> = ({
     const distKm = (minD / 1000).toFixed(1);
     const driveTimeMin = Math.max(1, Math.round((minD / 1000) / 28 * 60));
     return { crossing: closest, distKm, driveTimeMin, distMeters: Math.round(minD) };
-  })();
+  }, [crossings, userLoc]);
+
+  // Memoize key crossings selection to avoid array allocations on every render
+  const displayList = useMemo(() => {
+    if (!crossings || crossings.length === 0) return [];
+    const keyCrossingIds = [
+      'osm/node/1006212111', // Jaura Phatak (Joda Phatak)
+      'osm/node/1006139587', // Shivala Phatak (Shivala Gate)
+      'osm/node/8179551888', // Vallah Phatak (Mehta Road Crossing)
+      'osm/node/1326294756'  // Verka Phatak (Old Batala Road Crossing)
+    ];
+    const keyCrossings = keyCrossingIds
+      .map(id => crossings.find(c => c.id === id))
+      .filter(Boolean) as RailwayCrossing[];
+    return keyCrossings.length === 4 ? keyCrossings : crossings.slice(0, 4);
+  }, [crossings]);
 
   // Acquire current GPS position
   const acquireGps = async () => {
@@ -267,6 +282,45 @@ export const HomeView: React.FC<HomeViewProps> = ({
           </div>
         </div>
       </div>
+
+      {/* NEAREST RAILWAY FATAK SKELETON (SHOWN WHILE DATA LOADS) */}
+      {!nearestData && (
+        <div style={{
+          backgroundColor: 'var(--bg-surface)',
+          border: '1.5px solid var(--border-soft)',
+          borderRadius: 'var(--radius-lg)',
+          padding: '18px 20px',
+          marginBottom: '16px',
+          boxShadow: 'var(--shadow-md)',
+          minHeight: '220px'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '14px' }}>
+            <div className="skeleton-box" style={{ width: '32px', height: '32px', borderRadius: '50%' }} />
+            <div style={{ flex: 1 }}>
+              <div className="skeleton-box" style={{ width: '190px', height: '16px', borderRadius: '4px', marginBottom: '4px' }} />
+              <div className="skeleton-box" style={{ width: '130px', height: '12px', borderRadius: '3px' }} />
+            </div>
+          </div>
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))',
+            gap: '12px'
+          }}>
+            {[1, 2, 3, 4].map(i => (
+              <div key={i} style={{
+                backgroundColor: 'var(--bg-secondary)',
+                border: '1px solid var(--border-subtle)',
+                borderRadius: 'var(--radius-md)',
+                padding: '12px 14px'
+              }}>
+                <div className="skeleton-box" style={{ width: '100px', height: '10px', borderRadius: '2px', marginBottom: '8px' }} />
+                <div className="skeleton-box" style={{ width: '65%', height: '16px', borderRadius: '4px', marginBottom: '6px' }} />
+                <div className="skeleton-box" style={{ width: '85%', height: '12px', borderRadius: '3px' }} />
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* NEAREST RAILWAY FATAK TO YOU — ANSWERS THE 4 CORE COMMUTER QUESTIONS */}
       {nearestData && (
@@ -567,19 +621,33 @@ export const HomeView: React.FC<HomeViewProps> = ({
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(220px, 100%), 1fr))', gap: '12px' }}>
-          {(() => {
-            const keyCrossingIds = [
-              'osm/node/1006212111', // Jaura Phatak (Joda Phatak)
-              'osm/node/1006139587', // Shivala Phatak (Shivala Gate)
-              'osm/node/8179551888', // Vallah Phatak (Mehta Road Crossing)
-              'osm/node/1326294756'  // Verka Phatak (Old Batala Road Crossing)
-            ];
-            const keyCrossings = keyCrossingIds
-              .map(id => crossings.find(c => c.id === id))
-              .filter(Boolean) as RailwayCrossing[];
-            const displayList = keyCrossings.length === 4 ? keyCrossings : crossings.slice(0, 4);
-
-            return displayList.map(crossing => {
+          {displayList.length === 0 ? (
+            [1, 2, 3, 4].map(i => (
+              <div
+                key={i}
+                style={{
+                  backgroundColor: 'var(--bg-surface)',
+                  border: '1px solid var(--border-subtle)',
+                  borderRadius: 'var(--radius-md)',
+                  padding: '14px',
+                  minHeight: '112px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  justifyContent: 'space-between'
+                }}
+              >
+                <div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
+                    <div className="skeleton-box" style={{ width: '120px', height: '14px', borderRadius: '3px' }} />
+                    <div className="skeleton-box" style={{ width: '54px', height: '14px', borderRadius: 'var(--radius-full)' }} />
+                  </div>
+                  <div className="skeleton-box" style={{ width: '80px', height: '12px', borderRadius: '3px' }} />
+                </div>
+                <div className="skeleton-box" style={{ width: '150px', height: '12px', borderRadius: '3px' }} />
+              </div>
+            ))
+          ) : (
+            displayList.map(crossing => {
               const timing = getCrossingTimingDetails(crossing, now, trains);
 
             return (
@@ -651,10 +719,12 @@ export const HomeView: React.FC<HomeViewProps> = ({
                 )}
               </div>
             );
-          });
-        })()}
+          }))}
         </div>
       </div>
     </div>
   );
 };
+
+export const HomeView = memo(HomeViewComponent);
+export default HomeView;

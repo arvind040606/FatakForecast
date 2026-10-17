@@ -42,6 +42,8 @@ class RailwayAPIService {
   };
   private lastProcessedTimestamp: number = 0;
   private inFlightPollAbort: AbortController | null = null;
+  private measuredClientLatencyMs: number | null = null;
+  private lastPingSentMs: number = 0;
 
   constructor() {
     if (typeof window !== 'undefined') {
@@ -111,6 +113,10 @@ class RailwayAPIService {
 
   public getIsOnline(): boolean {
     return this.isOnline;
+  }
+
+  public getLastPayload(): TelemetryPayload {
+    return this.lastGoodPayload;
   }
 
   public getBaseUrl(): string {
@@ -210,6 +216,7 @@ class RailwayAPIService {
       this.initWebSocket();
     } else {
       try {
+        this.lastPingSentMs = Date.now();
         this.ws.send(JSON.stringify({ type: 'PING' }));
       } catch (e) {}
     }
@@ -261,6 +268,9 @@ class RailwayAPIService {
         try {
           const raw = JSON.parse(event.data);
           if (raw.type === 'PONG' || raw.type === 'HEARTBEAT') {
+            if (this.lastPingSentMs > 0) {
+              this.measuredClientLatencyMs = Math.max(1, Math.round(Date.now() - this.lastPingSentMs));
+            }
             this.updateConnectionState(true, false);
             return;
           }
@@ -299,6 +309,7 @@ class RailwayAPIService {
     this.wsHeartbeatTimer = setInterval(() => {
       if (this.ws && this.ws.readyState === WebSocket.OPEN) {
         try {
+          this.lastPingSentMs = Date.now();
           this.ws.send(JSON.stringify({ type: 'PING' }));
         } catch (e) {}
 
@@ -368,11 +379,20 @@ class RailwayAPIService {
       state = 'OFFLINE';
     }
 
+    // Report genuine client network round-trip latency to the FatakForecast backend
+    // Avoid conflating upstream third-party IRCTC/RailKit gateway sync times (>20s) with browser network latency
+    let displayLatency: number | null = this.measuredClientLatencyMs;
+    if (displayLatency === null && this.lastGoodPayload?.metrics?.feedLatencyMs) {
+      if (this.lastGoodPayload.metrics.feedLatencyMs < 1500) {
+        displayLatency = this.lastGoodPayload.metrics.feedLatencyMs;
+      }
+    }
+
     return {
       state,
       backendConnected,
       railwayFeedStatus,
-      latencyMs: this.lastGoodPayload?.metrics?.feedLatencyMs ?? null,
+      latencyMs: displayLatency,
       lastSyncIso: lastSync
     };
   }
@@ -483,10 +503,14 @@ class RailwayAPIService {
       let liveRes: Response | null = null;
       try {
         const fetchSignal = AbortSignal.timeout(6000);
+        const pollStartMs = performance.now();
         liveRes = await fetch(`${baseUrl}/api/telemetry/live`, { 
           signal: fetchSignal,
           cache: 'no-store'
         });
+        if (liveRes && liveRes.ok) {
+          this.measuredClientLatencyMs = Math.max(1, Math.round(performance.now() - pollStartMs));
+        }
       } catch (err) {
         // If baseUrl failed and not running on local development loopback, probe working backend URL
         const isLocalDev = typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
@@ -496,10 +520,14 @@ class RailwayAPIService {
             baseUrl = probed;
             try {
               const retrySignal = AbortSignal.timeout(6000);
+              const retryStartMs = performance.now();
               liveRes = await fetch(`${baseUrl}/api/telemetry/live`, {
                 signal: retrySignal,
                 cache: 'no-store'
               });
+              if (liveRes && liveRes.ok) {
+                this.measuredClientLatencyMs = Math.max(1, Math.round(performance.now() - retryStartMs));
+              }
             } catch (retryErr) {}
           }
         }
