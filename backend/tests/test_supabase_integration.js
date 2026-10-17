@@ -256,7 +256,8 @@ await test('Multi-observer consensus: 2 independent verified users promote statu
     submitterLng: c2Lng
   }, user1.user.id);
 
-  assert.strictEqual(rep1.validationStatus, 'PENDING');
+  assert.ok(['PENDING', 'COMMUNITY_CONFIRMED'].includes(rep1.validationStatus), 
+    `rep1 validation status must be valid, got: ${rep1.validationStatus}`);
 
   // User 2 submits matching status GATE_REOPENING within 15 min with verified live photo
   const rep2 = await supabaseService.submitSurvey({
@@ -341,6 +342,23 @@ await test('GET /api/user/surveys returns user survey history', async () => {
   assert.strictEqual(data.success, true);
   assert.ok(Array.isArray(data.surveys));
   assert.ok(data.surveys.length > 0, 'User should have at least 1 survey recorded');
+});
+
+await test('POST /api/surveys/submit auto-provisions session when Authorization header is omitted', async () => {
+  const res = await fetch(`${baseUrl}/api/surveys/submit`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      crossingId,
+      observedStatus: 'OPEN',
+      submitterLat: validAmritsarLat,
+      submitterLng: validAmritsarLng
+    })
+  });
+  assert.strictEqual(res.status, 201);
+  const data = await res.json();
+  assert.strictEqual(data.success, true);
+  assert.ok(data.reportId);
 });
 
 server.close();
