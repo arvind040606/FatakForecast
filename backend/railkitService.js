@@ -108,6 +108,20 @@ export function parseRailDateTime(str, referenceDate = new Date()) {
       return new Date(utcMs);
     }
   }
+  // Format: "MMM DD, YYYY, HH:mm" (e.g. "Oct 17, 2026, 13:35" or "Oct 17 2026 13:35")
+  const m3 = trimmed.match(/([A-Za-z]+)\s+(\d{1,2}),?\s+(\d{4}),?\s+(\d{1,2}):(\d{2})/);
+  if (m3) {
+    const months = { jan:0, feb:1, mar:2, apr:3, may:4, jun:5, jul:6, aug:7, sep:8, oct:9, nov:10, dec:11 };
+    const mon = months[m3[1].toLowerCase().slice(0, 3)];
+    if (mon !== undefined) {
+      const day = parseInt(m3[2], 10);
+      const year = parseInt(m3[3], 10);
+      const hour = parseInt(m3[4], 10);
+      const min = parseInt(m3[5], 10);
+      const utcMs = Date.UTC(year, mon, day, hour - 5, min - 30);
+      return new Date(utcMs);
+    }
+  }
   // Format: "HH:mm" (e.g. "12:30")
   const m2 = trimmed.match(/^(\d{1,2}):(\d{2})$/);
   if (m2) {
@@ -741,10 +755,12 @@ export class RailkitService {
     }
 
     // 4. Operational Status Classification
+    const isPastScheduledOriginDep = Boolean(originExpectedDepMs && (now > originExpectedDepMs + 10 * 60000));
     const isAtOriginStation = Boolean(
       currentStationCode === sourceCode &&
       (!reportedDistFromOrigin || reportedDistFromOrigin < 0.5) &&
-      (statusRaw === 'start' || statusRaw === 'at-station' || isNotStarted)
+      (statusRaw === 'start' || statusRaw === 'at-station' || isNotStarted) &&
+      !isPastScheduledOriginDep
     );
 
     // Intermediate halt check
@@ -770,7 +786,8 @@ export class RailkitService {
     }
 
     // 5. Data Freshness & State Classification
-    const updatedMs = new Date(lastUpdatedAt).getTime();
+    const parsedUpdated = parseRailDateTime(lastUpdatedAt);
+    const updatedMs = parsedUpdated ? parsedUpdated.getTime() : new Date(lastUpdatedAt).getTime();
     const ageMinutes = isNaN(updatedMs) ? 999 : (now - updatedMs) / (60 * 1000);
     const isStale = ageMinutes > 15;
 

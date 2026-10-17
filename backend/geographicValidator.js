@@ -337,7 +337,13 @@ export class GeographicValidator {
             const code = s.stationCode || s.stnCode;
             return Boolean(code && targetStnCode && code === targetStnCode);
           });
-          if (stnIndex !== -1 && stnIndex < currIndex) {
+          const nowMs = Date.now();
+          const hasDepartedTargetStn = Boolean(nearestStationOnRoute.expectedDepartureMs && (nowMs > nearestStationOnRoute.expectedDepartureMs + 90000));
+          const hasDepartedLaterStn = train.schedule.some((s, idx) => {
+            return idx > stnIndex && s.expectedDepartureMs && (nowMs > s.expectedDepartureMs);
+          });
+
+          if ((stnIndex !== -1 && stnIndex < currIndex) || hasDepartedTargetStn || hasDepartedLaterStn) {
             // Station was already passed in the timetable schedule!
             const distFromCrossing = haversineKm(train.lat, train.lng, crossing.lat, crossing.lng);
             return {
