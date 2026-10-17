@@ -87,13 +87,13 @@ export const DEMO_PRESET_PLACES: SavedPlace[] = [
 ];
 
 // Production Cloud Backend Gateway (Publicly Accessible over HTTPS)
-export const RENDER_BACKEND_URL = 'https://fatakforecast.onrender.com';
 export const VERCEL_FALLBACK_URL = 'https://fatakforecast.vercel.app';
-export const PRODUCTION_BACKEND_URL = RENDER_BACKEND_URL;
+export const RENDER_BACKEND_URL = VERCEL_FALLBACK_URL;
+export const PRODUCTION_BACKEND_URL = VERCEL_FALLBACK_URL;
 
 class NativeService {
   private isCapacitorNative: boolean = false;
-  private backendBaseUrl: string = PRODUCTION_BACKEND_URL;
+  private backendBaseUrl: string = '';
   private notificationHistory: AppNotification[] = [];
   private notificationPrefs: NotificationPreferences = { ...DEFAULT_NOTIFICATION_PREFS };
   private savedPlaces: SavedPlace[] = []; // Starts completely empty in production
@@ -115,12 +115,11 @@ class NativeService {
                              (typeof (window as any)?.Capacitor !== 'undefined' && (window as any)?.Capacitor?.isNativePlatform?.() === true) ||
                              (typeof window !== 'undefined' && (
                                window.location.protocol === 'capacitor:' ||
-                               (window.location.hostname === 'localhost' && (!window.location.port || window.location.port === '')) ||
-                               /Android|iPhone|iPad|Mobile/i.test(navigator.userAgent)
+                               (window.location.hostname === 'localhost' && (!window.location.port || window.location.port === '') && typeof (window as any)?.Capacitor !== 'undefined')
                              ));
 
-    // Default to the verified production cloud backend URL for standalone phone operation
-    this.backendBaseUrl = PRODUCTION_BACKEND_URL;
+    // Initialize backend URL dynamically based on environment
+    this.backendBaseUrl = '';
 
     // Listen for OS system theme changes
     if (typeof window !== 'undefined' && window.matchMedia) {
@@ -278,7 +277,18 @@ class NativeService {
 
       const isMobileEnv = this.isNative() || Capacitor.isNativePlatform();
 
-      if (isLoopbackWeb) {
+      const isVercelWeb = typeof window !== 'undefined' && window.location.hostname.includes('vercel.app');
+
+      if (isVercelWeb) {
+        // When running on Vercel, always route to same-origin APIs
+        this.backendBaseUrl = window.location.origin;
+        await this.storageSet('fatak_backend_url', this.backendBaseUrl);
+        try {
+          if (typeof localStorage !== 'undefined') {
+            localStorage.setItem('fatak_backend_url', this.backendBaseUrl);
+          }
+        } catch (e) {}
+      } else if (isLoopbackWeb) {
         // In local web development, always default to the active local backend port 8787
         this.backendBaseUrl = (storedUrl && storedUrl.includes('8787')) ? storedUrl : 'http://localhost:8787';
         await this.storageSet('fatak_backend_url', this.backendBaseUrl);
@@ -575,34 +585,34 @@ class NativeService {
       const viteEnvUrl = (import.meta as any).env?.VITE_BACKEND_URL;
       if (viteEnvUrl) return String(viteEnvUrl).replace(/\/+$/, '');
 
-      // In Capacitor native mobile app or on mobile devices, use cloud production URL
-      const isMobileDevice = this.isNative() || 
-                             Capacitor.isNativePlatform() ||
-                             window.location.protocol === 'capacitor:' ||
-                             (window.location.hostname === 'localhost' && (!window.location.port || window.location.port === '')) ||
-                             /Android|iPhone|iPad|Mobile/i.test(navigator.userAgent);
+      const hostname = window.location.hostname;
 
-      if (isMobileDevice) {
-        return PRODUCTION_BACKEND_URL;
+      // 1. If hosted on Vercel, ALWAYS route to same-origin APIs (even on mobile browsers)
+      if (hostname.includes('vercel.app')) {
+        return window.location.origin;
       }
 
-      const hostname = window.location.hostname;
-      // Local development on PC loopback ONLY if running on typical dev server ports
+      // 2. If hosted on Render, route to same-origin APIs
+      if (hostname.includes('onrender.com')) {
+        return window.location.origin;
+      }
+
+      // 3. Local development on PC loopback ONLY if running on typical dev server ports
       if ((hostname === 'localhost' || hostname === '127.0.0.1') && (window.location.port === '5173' || window.location.port === '3000')) {
         return 'http://localhost:8787';
       }
 
-      // If hosted on Vercel, route to same-origin APIs
-      if (window.location.hostname.includes('vercel.app')) {
-        return window.location.origin;
+      // 4. In standalone Capacitor native mobile APK wrapper (not web browser), use production URL
+      const isStandaloneNative = this.isNative() || 
+                                 Capacitor.isNativePlatform() ||
+                                 window.location.protocol === 'capacitor:' ||
+                                 (hostname === 'localhost' && (!window.location.port || window.location.port === ''));
+
+      if (isStandaloneNative) {
+        return PRODUCTION_BACKEND_URL;
       }
 
-      // If hosted on Render, route to same-origin APIs
-      if (window.location.hostname.includes('onrender.com')) {
-        return window.location.origin;
-      }
-
-      // If hosted on general HTTPS
+      // 5. If hosted on general HTTPS
       if (window.location.protocol === 'https:') {
         return window.location.origin;
       }
@@ -646,13 +656,18 @@ class NativeService {
   }
 
   public async probeWorkingBackendUrl(): Promise<string | null> {
+    // If running in browser on Vercel, ALWAYS use same-origin APIs directly
+    if (typeof window !== 'undefined' && window.location.hostname.includes('vercel.app')) {
+      return window.location.origin;
+    }
+
+    const defaultUrl = this.getDefaultBackendUrl();
     const viteEnvUrl = (import.meta as any).env?.VITE_BACKEND_URL;
     const candidateList = [
       viteEnvUrl,
-      RENDER_BACKEND_URL,
-      this.backendBaseUrl,
-      this.getDefaultBackendUrl(),
-      VERCEL_FALLBACK_URL
+      defaultUrl,
+      VERCEL_FALLBACK_URL,
+      this.backendBaseUrl
     ];
     const candidates = Array.from(new Set(candidateList.filter(Boolean)));
 
