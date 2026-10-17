@@ -19,6 +19,7 @@ import { getCrossingTimingDetails } from '../utils/trainHelpers';
 import { useSharedTimer } from '../utils/timerManager';
 import { haversineDistanceMeters, formatDistance } from '../utils/geoUtils';
 import { CrossingCard } from '../components/CrossingCard';
+import { CrossingCardSkeleton } from '../components/CrossingCardSkeleton';
 
 interface SavedPlacesViewProps {
   onNavigate: (route: ActiveRoute) => void;
@@ -26,13 +27,15 @@ interface SavedPlacesViewProps {
   trains?: SectorTrain[];
   onSelectCrossing?: (crossing: RailwayCrossing) => void;
   onSelectDestination?: (place: any) => void;
+  isInitialLoading?: boolean;
 }
 
 export const SavedPlacesView: React.FC<SavedPlacesViewProps> = ({
   onNavigate,
   crossings = INITIAL_CROSSINGS,
   trains = [],
-  onSelectCrossing
+  onSelectCrossing,
+  isInitialLoading = false
 }) => {
   const [favCrossingIds, setFavCrossingIds] = useState<string[]>(() => nativeService.getFavoriteCrossingIds());
   const [userCoords, setUserCoords] = useState<{ lat: number; lng: number } | null>(() => {
@@ -217,7 +220,35 @@ export const SavedPlacesView: React.FC<SavedPlacesViewProps> = ({
       )}
 
       {/* EMPTY STATE */}
-      {favoriteCrossings.length === 0 ? (
+      {isInitialLoading && crossings.length === 0 ? (
+        <div>
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '10px',
+            padding: '12px 16px',
+            borderRadius: 'var(--radius-md)',
+            backgroundColor: 'rgba(56, 189, 248, 0.08)',
+            border: '1px solid rgba(56, 189, 248, 0.2)',
+            marginBottom: '16px',
+            color: 'var(--accent-cyan)',
+            fontSize: '12.5px',
+            fontWeight: 600
+          }}>
+            <span className="loading-spinner-ring" />
+            <span>Loading your saved crossings...</span>
+          </div>
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))',
+            gap: '16px'
+          }}>
+            {[1, 2, 3].map(i => (
+              <CrossingCardSkeleton key={i} />
+            ))}
+          </div>
+        </div>
+      ) : favoriteCrossings.length === 0 ? (
         <div className="panel" style={{
           padding: '48px 24px',
           textAlign: 'center',

@@ -4,20 +4,43 @@ import { ChevronRight, Volume2, VolumeX } from 'lucide-react';
 
 interface CinematicIntroProps {
   onComplete: () => void;
+  isDataReady?: boolean;
 }
 
-export const CinematicIntro: React.FC<CinematicIntroProps> = ({ onComplete }) => {
+export const CinematicIntro: React.FC<CinematicIntroProps> = ({ onComplete, isDataReady }) => {
   const [soundEnabled, setSoundEnabled] = useState<boolean>(false);
   const [hasStartedExit, setHasStartedExit] = useState<boolean>(false);
+  const [minTimeElapsed, setMinTimeElapsed] = useState<boolean>(false);
+  const [statusStage, setStatusStage] = useState<number>(0);
 
   useEffect(() => {
-    // 1. Failsafe timer: Guarantees completion within 3.5 seconds
+    // Stage 1 -> Stage 2 -> Stage 3 status ticker
+    const s1 = setTimeout(() => setStatusStage(1), 1200);
+    const s2 = setTimeout(() => setStatusStage(2), 2200);
+
+    // Minimum display duration: 2.8s for smooth branded experience
+    const minTimer = setTimeout(() => {
+      setMinTimeElapsed(true);
+    }, 2800);
+
+    // Failsafe maximum timer: enter application within 4.8s regardless of network
     const failsafeTimer = setTimeout(() => {
       triggerExit();
-    }, 3500);
+    }, 4800);
 
-    return () => clearTimeout(failsafeTimer);
+    return () => {
+      clearTimeout(s1);
+      clearTimeout(s2);
+      clearTimeout(minTimer);
+      clearTimeout(failsafeTimer);
+    };
   }, []);
+
+  useEffect(() => {
+    if (minTimeElapsed && isDataReady) {
+      triggerExit();
+    }
+  }, [minTimeElapsed, isDataReady]);
 
   const triggerExit = () => {
     if (hasStartedExit) return;
@@ -469,19 +492,35 @@ export const CinematicIntro: React.FC<CinematicIntroProps> = ({ onComplete }) =>
           {/* ENTERING PLATFORM STATUS SUBTITLE */}
           <motion.div
             initial={{ opacity: 0 }}
-            animate={{ opacity: 0.8 }}
-            transition={{ delay: 2.6, duration: 0.4 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 1.0, duration: 0.5 }}
             style={{
-              marginTop: '12px',
+              marginTop: '14px',
               fontSize: '11px',
               fontWeight: 600,
-              color: '#667C94',
-              letterSpacing: '0.08em',
+              color: isDataReady ? '#10B981' : '#64748B',
+              letterSpacing: '0.06em',
               textTransform: 'uppercase',
-              fontFamily: 'var(--font-mono, monospace)'
+              fontFamily: 'var(--font-mono, monospace)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '7px'
             }}
           >
-            Live Rail Intelligence • Amritsar
+            {isDataReady ? (
+              <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#10B981', boxShadow: '0 0 6px #10B981' }} />
+            ) : (
+              <span className="loading-spinner-ring" style={{ width: '12px', height: '12px', borderWidth: '1.5px' }} />
+            )}
+            <span>
+              {isDataReady
+                ? 'Corridors Synchronized • Ready'
+                : statusStage === 0
+                ? 'Connecting to Amritsar Railway Hub...'
+                : statusStage === 1
+                ? 'Synchronizing Corridors & Track Geometry...'
+                : 'Loading Live Crossing Predictions...'}
+            </span>
           </motion.div>
         </div>
 

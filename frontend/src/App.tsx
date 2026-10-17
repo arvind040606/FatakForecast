@@ -88,14 +88,16 @@ export function App() {
   const [showIntro, setShowIntro] = useState<boolean>(() => {
     try {
       if (typeof window !== 'undefined' && (
-        sessionStorage.getItem('fatak_intro_seen') === 'true' ||
-        localStorage.getItem('fatak_intro_seen') === 'true'
+        sessionStorage.getItem('fatak_intro_seen') === 'true'
       )) {
         return false;
       }
     } catch {}
     return true;
   });
+
+  const [isInitialLoading, setIsInitialLoading] = useState<boolean>(true);
+  const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
 
   // User Location Profile (persisted locally across restarts)
   const [userProfile, setUserProfile] = useState<UserLocationProfile | null>(() => {
@@ -225,6 +227,8 @@ export function App() {
   useEffect(() => {
     // Subscribe to live telemetry stream (which handles initial delivery & continuous updates without redundant REST calls)
     const unsubscribe = railwayApi.subscribe((payload: TelemetryPayload) => {
+      setIsInitialLoading(false);
+      setIsRefreshing(false);
       // Structural sharing for crossings to avoid unnecessary component remounts and re-renders
       setCrossings(prev => {
         if (!prev || prev.length !== payload.crossings.length) {
@@ -350,11 +354,20 @@ export function App() {
       nativeService.evaluateAndTriggerDueAlarms();
     }, 25000);
 
+    const unsubConn = railwayApi.onConnectionStateChange((details) => {
+      if (details.state === 'CONNECTING' && !isInitialLoading) {
+        setIsRefreshing(true);
+      } else {
+        setIsRefreshing(false);
+      }
+    });
+
     return () => {
       unsubscribe();
+      unsubConn();
       clearInterval(alarmInterval);
     };
-  }, []);
+  }, [isInitialLoading]);
 
   const handleSelectCrossingAndOpenDetails = (crossing: RailwayCrossing, train?: SectorTrain | null) => {
     const impacting = train || findImpactingTrainForCrossing(crossing, trains);
@@ -364,6 +377,9 @@ export function App() {
 
   return (
     <div className="app-shell">
+      {/* SUBTLE GLIDING BACKGROUND TELEMETRY REFRESH BAR */}
+      {isRefreshing && <div className="telemetry-sync-bar" aria-hidden="true" />}
+
       {/* PERSISTENT SIDEBAR FOR DESKTOP / TABLET */}
       <Sidebar
         currentRoute={currentRoute}
@@ -432,10 +448,11 @@ export function App() {
               corridors={corridors}
               onNavigate={navigateTo}
               onSelectCrossing={handleSelectCrossingAndOpenDetails}
+              isInitialLoading={isInitialLoading}
             />
           )}
 
-          {(currentRoute === '/crossings' || currentRoute === '/forecasts') && (
+          {currentRoute === '/crossings' && (
             <CrossingsView
               crossings={crossings}
               trains={trains}
@@ -444,8 +461,20 @@ export function App() {
               lastUpdateTimestamp={lastUpdate}
               onSelectCrossing={handleSelectCrossingAndOpenDetails}
               onNavigate={navigateTo}
-              initialFilter={currentRoute === '/forecasts' ? 'CLOSURE_EXPECTED' : undefined}
+              isInitialLoading={isInitialLoading}
             />
+          )}
+
+          {currentRoute === '/forecasts' && (
+            <Suspense fallback={<ViewFallback />}>
+              <UpcomingClosuresView
+                crossings={crossings}
+                trains={trains}
+                onSelectCrossing={handleSelectCrossingAndOpenDetails}
+                onNavigate={navigateTo}
+                isInitialLoading={isInitialLoading}
+              />
+            </Suspense>
           )}
 
           <Suspense fallback={<ViewFallback />}>
@@ -465,6 +494,7 @@ export function App() {
                 crossings={crossings}
                 onSelectCrossing={handleSelectCrossingAndOpenDetails}
                 onNavigate={navigateTo}
+                isInitialLoading={isInitialLoading}
               />
             )}
 
@@ -474,6 +504,7 @@ export function App() {
                 trains={trains}
                 onNavigate={navigateTo}
                 onSelectCrossing={handleSelectCrossingAndOpenDetails}
+                isInitialLoading={isInitialLoading}
               />
             )}
 
@@ -534,10 +565,10 @@ export function App() {
         {/* CINEMATIC APPLICATION INTRODUCTION (INITIAL LAUNCH ONLY) */}
         {showIntro && (
           <CinematicIntro
+            isDataReady={!isInitialLoading}
             onComplete={() => {
               try {
                 sessionStorage.setItem('fatak_intro_seen', 'true');
-                localStorage.setItem('fatak_intro_seen', 'true');
               } catch {}
               setShowIntro(false);
               if (!nativeService.isLocationOnboarded()) {

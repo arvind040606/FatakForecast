@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { RailwayCrossing } from '../types';
 import { useSharedTimer, getAuthoritativeTargetEpoch, calculateRemainingSeconds, formatCountdown } from '../utils/timerManager';
+import { resolveActiveCrossingTrains } from '../utils/trainHelpers';
 
 interface ClosureCountdownProps {
   crossing: RailwayCrossing;
@@ -37,29 +38,39 @@ export const ClosureCountdown: React.FC<ClosureCountdownProps> = ({ crossing, sh
   // Synchronized tick from global shared timer scheduler
   const now = useSharedTimer();
 
+  // Train information: authoritative resolution (promotes to 2nd train when 1st train has passed)
+  const resolvedState = resolveActiveCrossingTrains(crossing, now);
+  const upcomingTrain = resolvedState.activeUpcomingTrain;
+
   // Compute live remaining durations using: remainingTime = targetTimestamp - currentTime
   let waitSec = 0;
   let closureSec = 0;
   let hasValidReopenTarget = false;
   let hasValidClosureTarget = false;
 
-  const closureTargetEpoch = getAuthoritativeTargetEpoch(crossing, 'closure', now);
+  const closureTargetEpoch = resolvedState.closeEpochMs && resolvedState.closeEpochMs > now 
+    ? resolvedState.closeEpochMs 
+    : getAuthoritativeTargetEpoch(crossing, 'closure', now);
+
   if (closureTargetEpoch !== null) {
     hasValidClosureTarget = true;
     closureSec = calculateRemainingSeconds(closureTargetEpoch, now);
-  } else if (crossing.countdownAvailable && typeof crossing.timeToNextClosureSec === 'number') {
+  } else if (crossing.countdownAvailable && typeof crossing.timeToNextClosureSec === 'number' && !resolvedState.lastTrainPassed) {
     closureSec = Math.max(0, crossing.timeToNextClosureSec);
   }
 
-  const isExplicitlyClosed = crossing.status === 'CLOSED' || crossing.status === 'CLOSURE_REPORTED' || Boolean(crossing.activeDrill) || crossing.observedPhysicalGateState === 'CLOSED';
+  const isPhysicalClosed = Boolean(crossing.activeDrill) || crossing.closureReported || crossing.observedPhysicalGateState === 'CLOSED';
   const isClosureExpected = crossing.status === 'CLOSURE_EXPECTED';
-  const isClosed = isExplicitlyClosed || (isClosureExpected && closureSec <= 0);
-  const isApproaching = (!isClosed && (crossing.status === 'APPROACHING' || isClosureExpected));
+  const isClosed = !resolvedState.isOpenPassage && (isPhysicalClosed || resolvedState.isClosedNow || (isClosureExpected && closureSec <= 0));
+  const isApproaching = (!isClosed && (resolvedState.isClosingSoon || crossing.status === 'APPROACHING' || isClosureExpected));
   const isUnknown = crossing.status === 'UNKNOWN';
-  const isPassageClear = !isUnknown && (crossing.status === 'OPEN' || (!isClosed && !isApproaching));
+  const isPassageClear = !isUnknown && (resolvedState.isOpenPassage || crossing.status === 'OPEN' || (!isClosed && !isApproaching));
 
   if (isClosed) {
-    const targetEpoch = getAuthoritativeTargetEpoch(crossing, 'reopen', now);
+    const targetEpoch = resolvedState.reopenEpochMs && resolvedState.reopenEpochMs > now 
+      ? resolvedState.reopenEpochMs 
+      : getAuthoritativeTargetEpoch(crossing, 'reopen', now);
+
     if (targetEpoch !== null) {
       hasValidReopenTarget = true;
       waitSec = calculateRemainingSeconds(targetEpoch, now);
@@ -96,12 +107,6 @@ export const ClosureCountdown: React.FC<ClosureCountdownProps> = ({ crossing, sh
   const secondsSinceUpdate = updateEpoch > 0 ? Math.max(0, Math.floor((now - updateEpoch) / 1000)) : null;
   const updateFormatted = format12h(lastUpdateIso);
 
-  // Train information
-  const upcomingTrain = (crossing as any).upcomingTrain || 
-                        (crossing as any).primaryTrain || 
-                        crossing.upcomingTrains?.[0] || 
-                        null;
-
   // Timeline Step 1: Expected to Close
   let step1Title = 'Expected to Close';
   let step1Time: string = 'Timing unavailable';
@@ -131,7 +136,10 @@ export const ClosureCountdown: React.FC<ClosureCountdownProps> = ({ crossing, sh
   let step2State: 'passed' | 'active' | 'upcoming' | 'clear' = 'clear';
 
   if (upcomingTrain) {
-    const trainArrivalEpoch = crossing.expectedTrainArrival ? new Date(crossing.expectedTrainArrival).getTime() : 0;
+    const arrivalIso = upcomingTrain.estimatedPassageTime || upcomingTrain.expectedTrainArrival || upcomingTrain.passageTime;
+    const trainArrivalEpoch = resolvedState.arrivalEpochMs && resolvedState.arrivalEpochMs > now 
+      ? resolvedState.arrivalEpochMs 
+      : (arrivalIso ? new Date(arrivalIso).getTime() : (crossing.expectedTrainArrival ? new Date(crossing.expectedTrainArrival).getTime() : 0));
     const trainArrivalSec = trainArrivalEpoch > now ? Math.max(0, Math.floor((trainArrivalEpoch - now) / 1000)) : 0;
     const trainNum = upcomingTrain.trainNumber || upcomingTrain.number || '';
     const trainName = upcomingTrain.trainName || upcomingTrain.name || 'Train';
@@ -141,7 +149,7 @@ export const ClosureCountdown: React.FC<ClosureCountdownProps> = ({ crossing, sh
       step2Sub = `#${trainNum} ${trainName} at crossing`;
       step2State = 'active';
     } else {
-      step2Time = format12h(crossing.expectedTrainArrival) || (trainArrivalSec ? `in ~${Math.round(trainArrivalSec / 60)}m` : 'Imminent');
+      step2Time = format12h(trainArrivalEpoch) || (trainArrivalSec ? `in ~${Math.round(trainArrivalSec / 60)}m` : 'Imminent');
       step2Sub = isClosed ? `#${trainNum} ${trainName} (Barriers down)` : `#${trainNum} ${trainName}`.trim();
       step2State = isClosed ? 'active' : 'upcoming';
     }

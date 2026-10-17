@@ -149,10 +149,20 @@ export const CrossingDetailPanel: React.FC<CrossingDetailPanelProps> = ({
   if (!crossing) return null;
 
   const corridor = corridors.find(c => c.id === crossing.corridorId);
-  const upcomingTrain = findImpactingTrainForCrossing(crossing, trains) || 
-    (crossing as any).upcomingTrain || 
-    (crossing as any).primaryTrain || 
-    null;
+  const impacting = findImpactingTrainForCrossing(crossing, trains, now);
+  const upcomingTrain = impacting || (timing?.hasApproachingTrain && timing.trainNumber && timing.activeTrain ? {
+    id: timing.activeTrain.trainNumber,
+    number: timing.activeTrain.trainNumber,
+    trainNumber: timing.activeTrain.trainNumber,
+    name: timing.activeTrain.trainName,
+    trainName: timing.activeTrain.trainName,
+    origin: crossing.line || 'Amritsar',
+    destination: crossing.locality || 'Amritsar Sector',
+    direction: timing.activeTrain.direction,
+    distanceKm: timing.activeTrain.distanceKm,
+    speedKmH: timing.activeTrain.speedText
+  } as any : null);
+  const followingTrains = timing?.secondaryTrains || [];
   const isPending = crossing.verificationStatus === 'REQUIRES_FIELD_VERIFICATION';
   const isUnknown = crossing.status === 'UNKNOWN';
   const isPassageClear = !isUnknown && (crossing.status === 'OPEN' || (!upcomingTrain && crossing.status !== 'CLOSED' && crossing.status !== 'CLOSURE_REPORTED' && crossing.status !== 'APPROACHING' && crossing.status !== 'CLOSURE_EXPECTED'));
@@ -428,7 +438,7 @@ export const CrossingDetailPanel: React.FC<CrossingDetailPanelProps> = ({
                 <span>View Full Train Schedule Timeline</span>
               </button>
 
-              {crossing.subsequentTrains && crossing.subsequentTrains.length > 0 && (
+              {followingTrains && followingTrains.length > 0 && (
                 <div style={{
                   marginTop: '14px',
                   padding: '12px',
@@ -443,7 +453,7 @@ export const CrossingDetailPanel: React.FC<CrossingDetailPanelProps> = ({
                     marginBottom: '8px'
                   }}>
                     <span style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' }}>
-                      Following Approaching Trains ({crossing.subsequentTrains.length})
+                      Following Approaching Trains ({followingTrains.length})
                     </span>
                     {crossing.combinedClosure?.isContinuous ? (
                       <span style={{
@@ -472,7 +482,7 @@ export const CrossingDetailPanel: React.FC<CrossingDetailPanelProps> = ({
                     )}
                   </div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                    {crossing.subsequentTrains.map((sub, idx) => (
+                    {followingTrains.map((sub: any, idx: number) => (
                       <div
                         key={idx}
                         style={{

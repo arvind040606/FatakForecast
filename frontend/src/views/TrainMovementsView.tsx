@@ -15,19 +15,22 @@ import {
 } from 'lucide-react';
 import { SectorTrain, RailwayCrossing, ActiveRoute } from '../types';
 import { TrainScheduleModal } from '../components/TrainScheduleModal';
+import { TrainCardSkeleton } from '../components/TrainCardSkeleton';
 
 interface TrainMovementsViewProps {
   trains: SectorTrain[];
   crossings: RailwayCrossing[];
   onSelectCrossing: (crossing: RailwayCrossing) => void;
   onNavigate: (route: ActiveRoute) => void;
+  isInitialLoading?: boolean;
 }
 
 export const TrainMovementsView: React.FC<TrainMovementsViewProps> = ({
   trains,
   crossings,
   onSelectCrossing,
-  onNavigate
+  onNavigate,
+  isInitialLoading = false
 }) => {
   const [scheduleModalTrain, setScheduleModalTrain] = useState<SectorTrain | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -209,13 +212,84 @@ export const TrainMovementsView: React.FC<TrainMovementsViewProps> = ({
 
       {/* CARDS VIEW (DEFAULT & RESPONSIVE GRID) */}
       {viewMode === 'cards' && (
-        <div style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fill, minmax(min(340px, 100%), 1fr))',
-          gap: '16px',
-          marginBottom: '24px'
-        }}>
-          {sortedTrains.map(train => {
+        (isInitialLoading && trains.length === 0) ? (
+          <div>
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '10px',
+              padding: '12px 16px',
+              borderRadius: 'var(--radius-md)',
+              backgroundColor: 'rgba(56, 189, 248, 0.08)',
+              border: '1px solid rgba(56, 189, 248, 0.2)',
+              marginBottom: '16px',
+              color: 'var(--accent-cyan)',
+              fontSize: '12.5px',
+              fontWeight: 600
+            }}>
+              <span className="loading-spinner-ring" />
+              <span>Fetching live train movements and corridor tracking...</span>
+            </div>
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fill, minmax(min(340px, 100%), 1fr))',
+              gap: '16px',
+              marginBottom: '24px'
+            }}>
+              {[1, 2, 3, 4].map(i => (
+                <TrainCardSkeleton key={i} />
+              ))}
+            </div>
+          </div>
+        ) : sortedTrains.length === 0 ? (
+          <div style={{
+            backgroundColor: 'var(--bg-surface)',
+            border: '1px solid var(--border-soft)',
+            borderRadius: 'var(--radius-lg)',
+            padding: '40px 24px',
+            textAlign: 'center',
+            marginBottom: '24px'
+          }}>
+            <div style={{
+              width: '48px',
+              height: '48px',
+              borderRadius: '50%',
+              backgroundColor: 'rgba(56, 189, 248, 0.12)',
+              border: '1px solid rgba(56, 189, 248, 0.25)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              margin: '0 auto 16px auto',
+              color: 'var(--accent-cyan)'
+            }}>
+              <Train size={24} />
+            </div>
+            <div style={{ fontSize: '16px', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '8px' }}>
+              {searchQuery ? 'No trains match your search' : 'All Amritsar Corridors Clear'}
+            </div>
+            <p style={{ fontSize: '13px', color: 'var(--text-secondary)', margin: '0 0 18px 0', maxWidth: '440px', marginInline: 'auto', lineHeight: '1.5' }}>
+              {searchQuery 
+                ? `No active train matched "${searchQuery}". Try clearing your search query or switching filters.` 
+                : 'No active trains are currently detected in the Amritsar sector. Trains approaching Amritsar Junction will appear here in real time as live GPS observations are confirmed.'}
+            </p>
+            {searchQuery && (
+              <button
+                onClick={() => setSearchQuery('')}
+                className="btn btn-secondary"
+                style={{ fontSize: '12px', padding: '6px 14px' }}
+              >
+                Clear Search
+              </button>
+            )}
+          </div>
+        ) : (
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fill, minmax(min(340px, 100%), 1fr))',
+            gap: '16px',
+            marginBottom: '24px'
+          }}>
+            {sortedTrains.map(train => {
             const targetCrossing = crossings.find(c => c.id === train.targetCrossingId);
             const st = getDisplayStatus(train);
 
@@ -394,6 +468,7 @@ export const TrainMovementsView: React.FC<TrainMovementsViewProps> = ({
             );
           })}
         </div>
+      )
       )}
 
       {/* TABLE VIEW (OPTION FOR DESKTOP) */}
@@ -413,7 +488,26 @@ export const TrainMovementsView: React.FC<TrainMovementsViewProps> = ({
               </tr>
             </thead>
             <tbody>
-              {sortedTrains.map(train => {
+              {(isInitialLoading && trains.length === 0) ? (
+                [1, 2, 3, 4].map(i => (
+                  <tr key={i}>
+                    <td><div className="skeleton-box" style={{ width: '130px', height: '16px', borderRadius: '4px' }} /></td>
+                    <td><div className="skeleton-box" style={{ width: '70px', height: '20px', borderRadius: 'var(--radius-full)' }} /></td>
+                    <td><div className="skeleton-box" style={{ width: '80px', height: '14px', borderRadius: '4px' }} /></td>
+                    <td><div className="skeleton-box" style={{ width: '140px', height: '14px', borderRadius: '4px' }} /></td>
+                    <td><div className="skeleton-box" style={{ width: '60px', height: '14px', borderRadius: '4px' }} /></td>
+                    <td><div className="skeleton-box" style={{ width: '100px', height: '14px', borderRadius: '4px' }} /></td>
+                    <td><div className="skeleton-box" style={{ width: '90px', height: '14px', borderRadius: '4px' }} /></td>
+                    <td style={{ textAlign: 'right' }}><div className="skeleton-box" style={{ width: '65px', height: '28px', borderRadius: '4px' }} /></td>
+                  </tr>
+                ))
+              ) : sortedTrains.length === 0 ? (
+                <tr>
+                  <td colSpan={8} style={{ textAlign: 'center', padding: '36px', color: 'var(--text-muted)' }}>
+                    No trains currently active in selected view.
+                  </td>
+                </tr>
+              ) : sortedTrains.map(train => {
                 const targetCrossing = crossings.find(c => c.id === train.targetCrossingId);
                 const st = getDisplayStatus(train);
 

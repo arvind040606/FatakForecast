@@ -35,6 +35,7 @@ interface HomeViewProps {
   corridors: RailwayCorridor[];
   onNavigate: (route: ActiveRoute) => void;
   onSelectCrossing: (crossing: RailwayCrossing) => void;
+  isInitialLoading?: boolean;
 }
 
 const HomeViewComponent: React.FC<HomeViewProps> = ({
@@ -42,7 +43,8 @@ const HomeViewComponent: React.FC<HomeViewProps> = ({
   crossings,
   trains,
   onNavigate,
-  onSelectCrossing
+  onSelectCrossing,
+  isInitialLoading = false
 }) => {
   // Synchronized global timer tick
   const now = useSharedTimer();
@@ -283,8 +285,9 @@ const HomeViewComponent: React.FC<HomeViewProps> = ({
         </div>
       </div>
 
-      {/* NEAREST RAILWAY FATAK SKELETON (SHOWN WHILE DATA LOADS) */}
-      {!nearestData && (
+
+      {/* NEAREST RAILWAY FATAK TO YOU — ANSWERS THE 4 CORE COMMUTER QUESTIONS */}
+      {isInitialLoading && !nearestData ? (
         <div style={{
           backgroundColor: 'var(--bg-surface)',
           border: '1.5px solid var(--border-soft)',
@@ -292,38 +295,28 @@ const HomeViewComponent: React.FC<HomeViewProps> = ({
           padding: '18px 20px',
           marginBottom: '16px',
           boxShadow: 'var(--shadow-md)',
-          minHeight: '220px'
+          position: 'relative'
         }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '14px' }}>
-            <div className="skeleton-box" style={{ width: '32px', height: '32px', borderRadius: '50%' }} />
-            <div style={{ flex: 1 }}>
-              <div className="skeleton-box" style={{ width: '190px', height: '16px', borderRadius: '4px', marginBottom: '4px' }} />
-              <div className="skeleton-box" style={{ width: '130px', height: '12px', borderRadius: '3px' }} />
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px', flexWrap: 'wrap', gap: '8px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <div className="skeleton-box" style={{ width: '32px', height: '32px', borderRadius: '50%' }} />
+              <div>
+                <div className="skeleton-box" style={{ width: '180px', height: '16px', borderRadius: '4px', marginBottom: '4px' }} />
+                <div className="skeleton-box" style={{ width: '120px', height: '12px', borderRadius: '3px' }} />
+              </div>
             </div>
+            <div className="skeleton-box" style={{ width: '130px', height: '28px', borderRadius: 'var(--radius-sm)' }} />
           </div>
-          <div style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))',
-            gap: '12px'
-          }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px' }}>
             {[1, 2, 3, 4].map(i => (
-              <div key={i} style={{
-                backgroundColor: 'var(--bg-secondary)',
-                border: '1px solid var(--border-subtle)',
-                borderRadius: 'var(--radius-md)',
-                padding: '12px 14px'
-              }}>
-                <div className="skeleton-box" style={{ width: '100px', height: '10px', borderRadius: '2px', marginBottom: '8px' }} />
-                <div className="skeleton-box" style={{ width: '65%', height: '16px', borderRadius: '4px', marginBottom: '6px' }} />
-                <div className="skeleton-box" style={{ width: '85%', height: '12px', borderRadius: '3px' }} />
+              <div key={i} style={{ backgroundColor: 'var(--bg-secondary)', padding: '12px', borderRadius: 'var(--radius-md)' }}>
+                <div className="skeleton-box" style={{ width: '80px', height: '10px', borderRadius: '2px', marginBottom: '8px' }} />
+                <div className="skeleton-box" style={{ width: '140px', height: '16px', borderRadius: '4px' }} />
               </div>
             ))}
           </div>
         </div>
-      )}
-
-      {/* NEAREST RAILWAY FATAK TO YOU — ANSWERS THE 4 CORE COMMUTER QUESTIONS */}
-      {nearestData && (
+      ) : nearestData ? (
         <div style={{
           backgroundColor: 'var(--bg-surface)',
           border: '1.5px solid var(--border-soft)',
@@ -596,7 +589,7 @@ const HomeViewComponent: React.FC<HomeViewProps> = ({
           {/* Embedded 3-Step Timeline for the Nearest Fatak */}
           <ClosureCountdown crossing={nearestData.crossing} showTimeline={true} />
         </div>
-      )}
+      ) : null}
 
       {/* KEY CROSSING GATES DIRECTORY PREVIEW */}
       <div className="panel" style={{ padding: '18px 20px' }}>

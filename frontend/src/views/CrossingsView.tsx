@@ -33,6 +33,7 @@ interface CrossingsViewProps {
   initialFilter?: string;
   userProfile?: UserLocationProfile | null;
   onChangeLocation?: () => void;
+  isInitialLoading?: boolean;
 }
 
 const CrossingsViewComponent: React.FC<CrossingsViewProps> = ({
@@ -45,7 +46,8 @@ const CrossingsViewComponent: React.FC<CrossingsViewProps> = ({
   onNavigate,
   initialFilter,
   userProfile,
-  onChangeLocation
+  onChangeLocation,
+  isInitialLoading = false
 }) => {
   const [filterStatus, setFilterStatus] = useState<string>(initialFilter || 'ALL');
   const [filterVerification, setFilterVerification] = useState<string>('ALL');
@@ -472,16 +474,34 @@ const CrossingsViewComponent: React.FC<CrossingsViewProps> = ({
 
       {/* CARDS VIEW (DEFAULT ACROSS ALL SCREENS) */}
       {viewMode === 'cards' && (
-        crossings.length === 0 ? (
-          <div style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fill, minmax(min(320px, 100%), 1fr))',
-            gap: '16px',
-            marginBottom: '24px'
-          }}>
-            {[1, 2, 3, 4, 5, 6].map(i => (
-              <CrossingCardSkeleton key={i} />
-            ))}
+        (isInitialLoading && crossings.length === 0) ? (
+          <div>
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '10px',
+              padding: '12px 16px',
+              borderRadius: 'var(--radius-md)',
+              backgroundColor: 'rgba(56, 189, 248, 0.08)',
+              border: '1px solid rgba(56, 189, 248, 0.2)',
+              marginBottom: '16px',
+              color: 'var(--accent-cyan)',
+              fontSize: '12.5px',
+              fontWeight: 600
+            }}>
+              <span className="loading-spinner-ring" />
+              <span>Loading crossing information and corridor tracks...</span>
+            </div>
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fill, minmax(min(320px, 100%), 1fr))',
+              gap: '16px',
+              marginBottom: '24px'
+            }}>
+              {[1, 2, 3, 4, 5, 6].map(i => (
+                <CrossingCardSkeleton key={i} />
+              ))}
+            </div>
           </div>
         ) : sorted.length === 0 ? (
           <div style={{
@@ -554,7 +574,25 @@ const CrossingsViewComponent: React.FC<CrossingsViewProps> = ({
               </tr>
             </thead>
             <tbody>
-              {sorted.map(crossing => {
+              {(isInitialLoading && crossings.length === 0) ? (
+                [1, 2, 3, 4, 5].map(i => (
+                  <tr key={i}>
+                    <td><div className="skeleton-box" style={{ width: '140px', height: '16px', borderRadius: '4px' }} /></td>
+                    <td><div className="skeleton-box" style={{ width: '80px', height: '20px', borderRadius: 'var(--radius-full)' }} /></td>
+                    <td><div className="skeleton-box" style={{ width: '100px', height: '14px', borderRadius: '4px' }} /></td>
+                    <td><div className="skeleton-box" style={{ width: '120px', height: '14px', borderRadius: '4px' }} /></td>
+                    <td><div className="skeleton-box" style={{ width: '90px', height: '14px', borderRadius: '4px' }} /></td>
+                    <td><div className="skeleton-box" style={{ width: '70px', height: '14px', borderRadius: '4px' }} /></td>
+                    <td style={{ textAlign: 'right' }}><div className="skeleton-box" style={{ width: '50px', height: '24px', borderRadius: '4px' }} /></td>
+                  </tr>
+                ))
+              ) : sorted.length === 0 ? (
+                <tr>
+                  <td colSpan={7} style={{ textAlign: 'center', padding: '36px', color: 'var(--text-muted)' }}>
+                    No level crossings match your filter.
+                  </td>
+                </tr>
+              ) : sorted.map(crossing => {
                 const badge = getStatusBadge(crossing);
                 const trainInfo = getCrossingTrainDisplay(crossing, trains);
                 const timing = getCrossingTimingDetails(crossing, now, trains);

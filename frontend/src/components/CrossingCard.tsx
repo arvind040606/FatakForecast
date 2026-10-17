@@ -168,7 +168,9 @@ const CrossingCardComponent: React.FC<CrossingCardProps> = ({
               </span>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '11.5px' }}>
-              <span style={{ color: 'var(--text-secondary)' }}>Train Arrival ETA:</span>
+              <span style={{ color: 'var(--text-secondary)' }}>
+                {timing.isClosedNow ? 'Reopening Status:' : 'Train Arrival ETA:'}
+              </span>
               <span className="tabular-nums" style={{ fontWeight: 700, color: timing.isClosedNow ? 'var(--critical-red)' : 'var(--accent-primary)', fontFamily: 'var(--font-mono)' }}>
                 {timing.trainArrivalEtaText}
               </span>
