@@ -639,7 +639,7 @@ class NativeService {
     const startTime = Date.now();
     try {
       const res = await fetch(`${target}/api/telemetry/live`, { 
-        signal: AbortSignal.timeout(4500),
+        signal: AbortSignal.timeout(10000),
         cache: 'no-store'
       });
       const latencyMs = Date.now() - startTime;
