@@ -87,7 +87,7 @@ export const DEMO_PRESET_PLACES: SavedPlace[] = [
 ];
 
 // Production Cloud Backend Gateway (Publicly Accessible over HTTPS)
-export const RENDER_BACKEND_URL = 'https://fatakforecast-backend.onrender.com';
+export const RENDER_BACKEND_URL = 'https://fatakforecast.onrender.com';
 export const VERCEL_FALLBACK_URL = 'https://fatakforecast.vercel.app';
 export const PRODUCTION_BACKEND_URL = RENDER_BACKEND_URL;
 

@@ -16,7 +16,7 @@
   "rewrites": [
     {
       "source": "/api/(.*)",
-      "destination": "https://fatakforecast-backend.onrender.com/api/$1"
+      "destination": "https://fatakforecast.onrender.com/api/$1"
     },
     {
       "source": "/(.*)",
