@@ -658,9 +658,23 @@ export const CrossingDetailPanel: React.FC<CrossingDetailPanelProps> = ({
           </div>
 
           {isLoadingAi && !aiAnalysis ? (
-            <div style={{ fontSize: '12px', color: 'var(--text-secondary)', padding: '6px 0', display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <div style={{ width: '12px', height: '12px', border: '2px solid currentColor', borderRightColor: 'transparent', borderRadius: '50%', animation: 'spin 0.75s linear infinite' }} />
-              <span>Checking live train positions and crossing safety...</span>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', padding: '4px 0' }} aria-busy="true">
+              <div className="skeleton-box" style={{ width: '92%', height: '14px', borderRadius: '4px' }} />
+              <div className="skeleton-box" style={{ width: '78%', height: '14px', borderRadius: '4px' }} />
+              <div style={{
+                backgroundColor: 'var(--bg-secondary)',
+                padding: '10px 12px',
+                borderRadius: 'var(--radius-sm)',
+                border: '1px solid var(--border-subtle)',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '6px',
+                marginTop: '4px'
+              }}>
+                <div className="skeleton-box" style={{ width: '130px', height: '10px', borderRadius: '2px', marginBottom: '2px' }} />
+                <div className="skeleton-box" style={{ width: '65%', height: '11px', borderRadius: '3px' }} />
+                <div className="skeleton-box" style={{ width: '80%', height: '11px', borderRadius: '3px' }} />
+              </div>
             </div>
           ) : aiAnalysis ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '12px' }}>

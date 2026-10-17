@@ -1627,6 +1627,39 @@ export const JourneyPlannerView: React.FC<JourneyPlannerViewProps> = ({
               )}
             </button>
 
+            {/* ROUTE CALCULATION SHIMMER SKELETON (Prevents layout shift) */}
+            {isPlanning && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '6px' }} aria-busy="true">
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 4px' }}>
+                  <div className="skeleton-box" style={{ width: '130px', height: '14px', borderRadius: '4px' }} />
+                  <div className="skeleton-box" style={{ width: '80px', height: '14px', borderRadius: '4px' }} />
+                </div>
+                {[1, 2, 3].map(i => (
+                  <div
+                    key={i}
+                    style={{
+                      padding: '12px 14px',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '8px',
+                      backgroundColor: 'var(--bg-secondary)',
+                      border: '1px solid var(--border-soft)',
+                      borderRadius: 'var(--radius-md)'
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <div className="skeleton-box" style={{ width: '120px', height: '16px', borderRadius: '4px' }} />
+                      <div className="skeleton-box" style={{ width: '65px', height: '18px', borderRadius: 'var(--radius-full)' }} />
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+                      <div className="skeleton-box" style={{ width: '75px', height: '12px', borderRadius: '3px' }} />
+                      <div className="skeleton-box" style={{ width: '110px', height: '12px', borderRadius: '3px' }} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
             {/* 4. THE THREE ROUTE OPTIONS COMPARISON (COMPACT STRIP) */}
             {allCandidateRoutes.length > 0 && (() => {
               const conflictCrossing = (fastestRoute?.crossings || []).find(c => c.conflictSeverity === 'HIGH' || (c.delaySec && c.delaySec > 0) || c.currentStatus === 'CLOSED' || c.currentStatus === 'APPROACHING');

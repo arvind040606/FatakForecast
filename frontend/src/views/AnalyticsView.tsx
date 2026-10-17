@@ -39,6 +39,62 @@ export const AnalyticsView: React.FC = () => {
         </p>
       </div>
 
+      {loading ? (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+          {/* Disclosure Banner Skeleton */}
+          <div className="card" style={{ padding: '16px 20px', display: 'flex', gap: '14px', backgroundColor: 'var(--bg-secondary)', border: '1px solid var(--border-soft)' }}>
+            <div className="skeleton-box" style={{ width: '24px', height: '24px', borderRadius: '50%', flexShrink: 0 }} />
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', flex: 1 }}>
+              <div className="skeleton-box" style={{ width: '280px', height: '14px', borderRadius: '4px' }} />
+              <div className="skeleton-box" style={{ width: '100%', height: '12px', borderRadius: '3px' }} />
+              <div className="skeleton-box" style={{ width: '85%', height: '12px', borderRadius: '3px' }} />
+            </div>
+          </div>
+
+          {/* Metric Cards Skeleton Grid */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px' }}>
+            {[1, 2, 3, 4].map(i => (
+              <div key={i} className="card" style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <div className="skeleton-box" style={{ width: '130px', height: '12px', borderRadius: '3px' }} />
+                <div className="skeleton-box" style={{ width: '90px', height: '26px', borderRadius: '4px', margin: '4px 0' }} />
+                <div className="skeleton-box" style={{ width: '160px', height: '11px', borderRadius: '3px' }} />
+              </div>
+            ))}
+          </div>
+
+          {/* Infrastructure Card Skeleton */}
+          <div className="card" style={{ padding: '20px' }}>
+            <div className="skeleton-box" style={{ width: '320px', height: '16px', borderRadius: '4px', marginBottom: '14px' }} />
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '14px' }}>
+              {[1, 2, 3, 4].map(i => (
+                <div key={i} style={{ padding: '14px', borderRadius: '8px', backgroundColor: 'var(--bg-secondary)', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  <div className="skeleton-box" style={{ width: '140px', height: '12px', borderRadius: '3px' }} />
+                  <div className="skeleton-box" style={{ width: '110px', height: '22px', borderRadius: '4px' }} />
+                  <div className="skeleton-box" style={{ width: '160px', height: '10px', borderRadius: '3px' }} />
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Protocol Table Skeleton */}
+          <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+            <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border-soft)' }}>
+              <div className="skeleton-box" style={{ width: '260px', height: '16px', borderRadius: '4px' }} />
+            </div>
+            <div style={{ padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              {[1, 2, 3, 4].map(i => (
+                <div key={i} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px' }}>
+                  <div className="skeleton-box" style={{ width: '180px', height: '14px', borderRadius: '4px' }} />
+                  <div className="skeleton-box" style={{ width: '120px', height: '14px', borderRadius: '4px' }} />
+                  <div className="skeleton-box" style={{ width: '90px', height: '14px', borderRadius: '4px' }} />
+                  <div className="skeleton-box" style={{ width: '70px', height: '20px', borderRadius: 'var(--radius-full)' }} />
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      ) : (
+        <>
       {/* SCIENTIFIC DISCLOSURE: ACCURACY IS UNMEASURED */}
       <div className="card" style={{
         padding: '16px 20px',
@@ -373,6 +429,8 @@ export const AnalyticsView: React.FC = () => {
           </table>
         </div>
       </div>
+        </>
+      )}
     </div>
   );
 };

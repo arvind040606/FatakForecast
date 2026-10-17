@@ -338,12 +338,37 @@ export const TrainScheduleModal: React.FC<TrainScheduleModalProps> = ({
         {/* TIMELINE BODY */}
         <div className="journey-timeline-wrapper" style={{ flex: 1, backgroundColor: 'var(--bg-surface)' }}>
           {loading && schedule.length === 0 ? (
-            <div style={{ padding: '48px 20px', textAlign: 'center', color: 'var(--text-secondary)' }}>
-              <RefreshCw size={28} color="var(--accent-primary)" className="animate-spin" style={{ margin: '0 auto 12px' }} />
-              <div style={{ fontSize: '15px', fontWeight: 700, color: 'var(--accent-emphasis)' }}>Loading Train Timetable...</div>
-              <div style={{ fontSize: '12.5px', color: 'var(--text-muted)', marginTop: '4px' }}>
-                Fetching official station stopping sequence and scheduled timings
+            <div style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '14px' }} aria-busy="true">
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '0 4px', marginBottom: '2px' }}>
+                <div className="skeleton-box" style={{ width: '14px', height: '14px', borderRadius: '50%' }} />
+                <div className="skeleton-box" style={{ width: '180px', height: '13px', borderRadius: '4px' }} />
               </div>
+              {[1, 2, 3, 4].map(i => (
+                <div
+                  key={i}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '14px',
+                    padding: '12px 14px',
+                    backgroundColor: 'var(--bg-secondary)',
+                    borderRadius: 'var(--radius-md)',
+                    border: '1px solid var(--border-soft)'
+                  }}
+                >
+                  <div className="skeleton-box" style={{ width: '32px', height: '32px', borderRadius: '50%', flexShrink: 0 }} />
+                  <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <div className="skeleton-box" style={{ width: '140px', height: '16px', borderRadius: '4px' }} />
+                      <div className="skeleton-box" style={{ width: '50px', height: '18px', borderRadius: 'var(--radius-full)' }} />
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                      <div className="skeleton-box" style={{ width: '80px', height: '12px', borderRadius: '3px' }} />
+                      <div className="skeleton-box" style={{ width: '90px', height: '12px', borderRadius: '3px' }} />
+                    </div>
+                  </div>
+                </div>
+              ))}
             </div>
           ) : filteredStops.length === 0 ? (
             <div style={{ padding: '48px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>

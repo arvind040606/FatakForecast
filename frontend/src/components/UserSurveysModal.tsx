@@ -133,9 +133,31 @@ export const UserSurveysModal: React.FC<UserSurveysModalProps> = ({
         {/* BODY */}
         <div style={{ padding: '16px 20px', overflowY: 'auto', flex: 1 }}>
           {isLoading ? (
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '40px 0', gap: '12px' }}>
-              <Loader2 size={24} className="animate-spin" color="#38BDF8" />
-              <span style={{ fontSize: '13px', color: 'var(--text-muted, #94A3B8)' }}>Loading your reports...</span>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }} aria-busy="true">
+              {[1, 2, 3].map(i => (
+                <div
+                  key={i}
+                  style={{
+                    padding: '12px 14px',
+                    backgroundColor: 'rgba(255, 255, 255, 0.03)',
+                    border: '1px solid rgba(255, 255, 255, 0.08)',
+                    borderRadius: '12px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '8px'
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <div className="skeleton-box" style={{ width: '150px', height: '16px', borderRadius: '4px' }} />
+                    <div className="skeleton-box" style={{ width: '80px', height: '18px', borderRadius: 'var(--radius-full)' }} />
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <div className="skeleton-box" style={{ width: '90px', height: '12px', borderRadius: '3px' }} />
+                    <div className="skeleton-box" style={{ width: '70px', height: '12px', borderRadius: '3px' }} />
+                    <div className="skeleton-box" style={{ width: '60px', height: '12px', borderRadius: '3px' }} />
+                  </div>
+                </div>
+              ))}
             </div>
           ) : error ? (
             <div style={{ padding: '20px', textAlign: 'center' }}>
