@@ -131,7 +131,7 @@ export const UserSurveysModal: React.FC<UserSurveysModalProps> = ({
         </div>
 
         {/* BODY */}
-        <div style={{ padding: '16px 20px', overflowY: 'auto', flex: 1 }}>
+        <div className="bottom-sheet-scroll-body" style={{ padding: '16px 20px', overflowY: 'auto', flex: 1, minHeight: 0 }}>
           {isLoading ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }} aria-busy="true">
               {[1, 2, 3].map(i => (

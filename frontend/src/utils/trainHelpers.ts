@@ -124,8 +124,17 @@ export function resolveActiveCrossingTrains(
     };
   }
 
-  // 1. Collect all candidates associated with this crossing
-  const primaryCand = (crossing as any).upcomingTrain || (crossing as any).primaryTrain || null;
+  // 1. Collect all candidates associated with this crossing (including monitored corridor trains)
+  const corridorFromList = (!((crossing as any).upcomingTrain || (crossing as any).primaryTrain || (crossing as any).activeCorridorTrain || (crossing as any).corridorTrain) && Array.isArray(trainList))
+    ? trainList.find(t => t.corridorId === crossing.corridorId && t.status !== 'TERMINATED' && t.status !== 'CANCELLED' && t.status !== 'OUT_OF_SECTOR')
+    : null;
+
+  const primaryCand = (crossing as any).upcomingTrain || 
+                      (crossing as any).primaryTrain || 
+                      (crossing as any).activeCorridorTrain || 
+                      (crossing as any).corridorTrain || 
+                      corridorFromList ||
+                      null;
   const subsequentList: any[] = Array.isArray(crossing.subsequentTrains) 
     ? [...crossing.subsequentTrains] 
     : (Array.isArray(crossing.upcomingTrains) ? [...crossing.upcomingTrains] : []);
@@ -853,7 +862,7 @@ export function getCrossingTimingDetails(
   // 13. Comprehensive activeTrain calculation for all crossing states (Approaching, Stationary, Receding, Monitored)
   let activeTrain: CrossingTimingDetails['activeTrain'] = null;
   if (upcomingTrain) {
-    const isStationary = Boolean(upcomingTrain.status === 'YET_TO_START' || upcomingTrain.isStationary || upcomingTrain.speedKmH === 0);
+    const isStationary = Boolean(upcomingTrain.status === 'YET_TO_START' || upcomingTrain.status === 'PLATFORM_BOARDING' || upcomingTrain.status === 'NOT_STARTED' || upcomingTrain.isStationary || upcomingTrain.speedKmH === 0);
     const distNum = typeof upcomingTrain.distanceKm === 'number' ? upcomingTrain.distanceKm : (typeof crossing.distanceAlongTrackKm === 'number' && !resolved.lastTrainPassed ? crossing.distanceAlongTrackKm : null);
 
     activeTrain = {
@@ -866,9 +875,13 @@ export function getCrossingTimingDetails(
       isStationary,
       dataState: upcomingTrain.dataState,
       distanceKm: distNum,
-      timingText: trainArrivalEtaText,
+      timingText: isStationary 
+        ? (upcomingTrain.expectedDepartureFormatted ? `At Platform • Dept ${upcomingTrain.expectedDepartureFormatted}` : (upcomingTrain.status === 'PLATFORM_BOARDING' ? 'Boarding at Platform' : 'Stationary at Platform'))
+        : trainArrivalEtaText,
       isApproaching: !isStationary,
-      locationText: distNum ? `~${distNum.toFixed(1)} km away` : 'On Approach Track'
+      locationText: isStationary 
+        ? (upcomingTrain.currentStationName ? `At ${upcomingTrain.currentStationName}` : 'Stationary at Platform')
+        : (distNum ? `~${distNum.toFixed(1)} km away` : 'On Approach Track')
     };
   } else if (
     activeCand && 

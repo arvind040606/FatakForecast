@@ -252,8 +252,8 @@ const CrossingCardComponent: React.FC<CrossingCardProps> = ({
             </div>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '11px', color: 'var(--text-secondary)' }}>
               <span>Track Traffic:</span>
-              <span className="tabular-nums" style={{ color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
-                0 trains within 15 km
+              <span className="tabular-nums" style={{ color: 'var(--status-open)', fontWeight: 600, fontSize: '11px' }}>
+                Clear • No trains approaching
               </span>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '10.5px', color: 'var(--text-muted)' }}>

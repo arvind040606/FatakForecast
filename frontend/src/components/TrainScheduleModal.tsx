@@ -336,7 +336,7 @@ export const TrainScheduleModal: React.FC<TrainScheduleModalProps> = ({
         </div>
 
         {/* TIMELINE BODY */}
-        <div className="journey-timeline-wrapper" style={{ flex: 1, backgroundColor: 'var(--bg-surface)' }}>
+        <div className="journey-timeline-wrapper bottom-sheet-scroll-body" style={{ flex: 1, minHeight: 0, backgroundColor: 'var(--bg-surface)' }}>
           {loading && schedule.length === 0 ? (
             <div style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '14px' }} aria-busy="true">
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '0 4px', marginBottom: '2px' }}>

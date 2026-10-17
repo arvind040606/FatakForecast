@@ -196,9 +196,18 @@ export const CrossingDetailPanel: React.FC<CrossingDetailPanelProps> = ({
   };
 
   const content = (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-surface)' }}>
+    <div style={{
+      display: 'flex',
+      flexDirection: 'column',
+      height: '100%',
+      maxHeight: '100%',
+      minHeight: 0,
+      flex: 1,
+      overflow: 'hidden',
+      backgroundColor: 'var(--bg-surface)'
+    }}>
       {/* MOBILE DRAG HANDLE */}
-      {isMobile && <div className="bottom-sheet-handle-bar" />}
+      {isMobile && <div className="bottom-sheet-handle-bar" style={{ flexShrink: 0 }} />}
 
       {/* HEADER */}
       <div style={{
@@ -264,7 +273,23 @@ export const CrossingDetailPanel: React.FC<CrossingDetailPanelProps> = ({
       </div>
 
       {/* CONTENT BODY */}
-      <div style={{ padding: isMobile ? '12px 14px' : '20px', display: 'flex', flexDirection: 'column', gap: isMobile ? '12px' : '16px', overflowY: 'auto', flex: 1, backgroundColor: 'var(--bg-surface)' }}>
+      <div 
+        className="bottom-sheet-scroll-body"
+        style={{
+          padding: isMobile ? '12px 14px' : '20px',
+          paddingBottom: isMobile ? 'max(48px, env(safe-area-inset-bottom, 32px))' : '28px',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: isMobile ? '12px' : '16px',
+          overflowY: 'auto',
+          flex: 1,
+          minHeight: 0,
+          WebkitOverflowScrolling: 'touch',
+          overscrollBehavior: 'contain',
+          touchAction: 'pan-y',
+          backgroundColor: 'var(--bg-surface)'
+        }}
+      >
         {/* CLOSURE COUNTDOWN / STATUS CARD WITH 3-STEP TIMELINE */}
         <ClosureCountdown crossing={crossing} showTimeline={true} />
 
@@ -1167,7 +1192,14 @@ export const CrossingDetailPanel: React.FC<CrossingDetailPanelProps> = ({
           animate="visible"
           exit="exit"
           onClick={(e) => e.stopPropagation()}
-          style={{ maxHeight: '90vh', backgroundColor: 'var(--bg-surface)' }}
+          style={{
+            height: '88vh',
+            maxHeight: '88dvh',
+            minHeight: 0,
+            display: 'flex',
+            flexDirection: 'column',
+            backgroundColor: 'var(--bg-surface)'
+          }}
         >
           {content}
         </motion.div>
