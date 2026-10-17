@@ -279,7 +279,16 @@ class NativeService {
 
       const isVercelWeb = typeof window !== 'undefined' && window.location.hostname.includes('vercel.app');
 
-      if (isVercelWeb) {
+      if (isMobileEnv) {
+        // In native APK, lock strictly to Vercel production link exclusively
+        this.backendBaseUrl = PRODUCTION_BACKEND_URL;
+        await this.storageSet('fatak_backend_url', PRODUCTION_BACKEND_URL);
+        try {
+          if (typeof localStorage !== 'undefined') {
+            localStorage.setItem('fatak_backend_url', PRODUCTION_BACKEND_URL);
+          }
+        } catch (e) {}
+      } else if (isVercelWeb) {
         // When running on Vercel, always route to same-origin APIs
         this.backendBaseUrl = window.location.origin;
         await this.storageSet('fatak_backend_url', this.backendBaseUrl);
@@ -292,7 +301,7 @@ class NativeService {
         // In local web development, always default to the active local backend port 8787
         this.backendBaseUrl = (storedUrl && storedUrl.includes('8787')) ? storedUrl : 'http://localhost:8787';
         await this.storageSet('fatak_backend_url', this.backendBaseUrl);
-      } else if (isMobileEnv || !storedUrl || isLegacyOrIncompatible) {
+      } else if (!storedUrl || isLegacyOrIncompatible) {
         this.backendBaseUrl = PRODUCTION_BACKEND_URL;
         await this.storageSet('fatak_backend_url', this.backendBaseUrl);
         try {
@@ -656,6 +665,12 @@ class NativeService {
   }
 
   public async probeWorkingBackendUrl(): Promise<string | null> {
+    // If running in standalone mobile APK, lock strictly to Vercel production backend URL
+    if (this.isNative() || Capacitor.isNativePlatform() || (typeof window !== 'undefined' && window.location.protocol === 'capacitor:')) {
+      this.backendBaseUrl = PRODUCTION_BACKEND_URL;
+      return PRODUCTION_BACKEND_URL;
+    }
+
     // If running in browser on Vercel, ALWAYS use same-origin APIs directly
     if (typeof window !== 'undefined' && window.location.hostname.includes('vercel.app')) {
       return window.location.origin;
