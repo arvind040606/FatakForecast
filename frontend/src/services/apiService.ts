@@ -485,7 +485,7 @@ class RailwayAPIService {
         const fetchSignal = AbortSignal.timeout(6000);
         liveRes = await fetch(`${baseUrl}/api/telemetry/live`, { 
           signal: fetchSignal,
-          headers: { 'Cache-Control': 'no-cache', 'Pragma': 'no-cache' }
+          cache: 'no-store'
         });
       } catch (err) {
         // If baseUrl failed and not running on local development loopback, probe working backend URL
@@ -498,7 +498,7 @@ class RailwayAPIService {
               const retrySignal = AbortSignal.timeout(6000);
               liveRes = await fetch(`${baseUrl}/api/telemetry/live`, {
                 signal: retrySignal,
-                headers: { 'Cache-Control': 'no-cache', 'Pragma': 'no-cache' }
+                cache: 'no-store'
               });
             } catch (retryErr) {}
           }
