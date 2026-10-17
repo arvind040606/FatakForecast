@@ -344,7 +344,7 @@ export const ClosureCountdown: React.FC<ClosureCountdownProps> = ({ crossing, sh
               lineHeight: 1
             }}>
               <span>{String(minutes).padStart(2, '0')}</span>
-              <span style={{ color: 'var(--text-muted)', animation: 'timerColonPulse 1.4s infinite' }}>:</span>
+              <span style={{ color: 'var(--text-muted)', margin: '0 1px' }}>:</span>
               <span>{String(seconds).padStart(2, '0')}</span>
             </div>
           ) : (

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { 
   Search, 
   MapPin, 
@@ -19,6 +19,7 @@ import { useSharedTimer, getAuthoritativeTargetEpoch, calculateRemainingSeconds,
 import { haversineDistanceMeters, formatDistance, getCrossingDataFreshness } from '../utils/geoUtils';
 import { nativeService } from '../services/nativeService';
 import { railwayApi } from '../services/apiService';
+import { CrossingCard } from '../components/CrossingCard';
 
 interface CrossingsViewProps {
   crossings: RailwayCrossing[];
@@ -107,6 +108,12 @@ export const CrossingsView: React.FC<CrossingsViewProps> = ({
     return matchStatus && matchVerification && matchSearch;
   });
 
+  const handleToggleFavorite = useCallback(async (crossingId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    await nativeService.toggleFavoriteCrossing(crossingId);
+    setFavIds(nativeService.getFavoriteCrossingIds());
+  }, []);
+
   const sorted = [...filtered].sort((a, b) => {
     if (sortBy === 'name') {
       const nameDiff = a.name.localeCompare(b.name);
@@ -117,7 +124,8 @@ export const CrossingsView: React.FC<CrossingsViewProps> = ({
     if (sortBy === 'distance' && userProfile) {
       const distA = haversineDistanceMeters(userProfile.lat, userProfile.lng, a.lat, a.lng);
       const distB = haversineDistanceMeters(userProfile.lat, userProfile.lng, b.lat, b.lng);
-      if (Math.abs(distA - distB) > 5) return distA - distB;
+      // Suppress sub-25m GPS jitter from constantly flipping nearby cards
+      if (Math.abs(distA - distB) > 25) return distA - distB;
       return a.name.localeCompare(b.name);
     }
     
@@ -137,12 +145,22 @@ export const CrossingsView: React.FC<CrossingsViewProps> = ({
       return scoreB - scoreA; // Higher urgency on top
     }
 
-    // Within same closure urgency tier, sort by anchored closure timestamp to prevent second-by-second jitter
+    // Within same closure urgency tier, sort by anchored closure timestamp
+    // Quantized into 60-second windows with deterministic tie-breaking to prevent cards from swapping on minor telemetry refreshes
     if (scoreA >= 1) {
       const timeA = getAuthoritativeTargetEpoch(a, 'closure', now) || (a.estimatedGateClosingTime ? new Date(a.estimatedGateClosingTime).getTime() : 0);
       const timeB = getAuthoritativeTargetEpoch(b, 'closure', now) || (b.estimatedGateClosingTime ? new Date(b.estimatedGateClosingTime).getTime() : 0);
-      if (timeA && timeB && timeA !== timeB) {
-        return timeA - timeB;
+      
+      if (timeA > 0 && timeB > 0) {
+        const windowA = Math.floor(timeA / 60000);
+        const windowB = Math.floor(timeB / 60000);
+        if (windowA !== windowB) {
+          return windowA - windowB;
+        }
+      } else if (timeA > 0 && timeB === 0) {
+        return -1;
+      } else if (timeA === 0 && timeB > 0) {
+        return 1;
       }
     }
 
@@ -199,7 +217,7 @@ export const CrossingsView: React.FC<CrossingsViewProps> = ({
                 padding: '2px 8px',
                 borderRadius: 'var(--radius-full)'
               }}>
-                <span style={{
+                <span className="pulse-calm" style={{
                   width: '6px',
                   height: '6px',
                   borderRadius: '50%',
@@ -435,274 +453,20 @@ export const CrossingsView: React.FC<CrossingsViewProps> = ({
           marginBottom: '24px'
         }}>
           {sorted.map(crossing => {
-            const badge = getStatusBadge(crossing);
-            const trainInfo = getCrossingTrainDisplay(crossing, trains);
-            const timing = getCrossingTimingDetails(crossing, now, trains);
             const distM = userProfile ? haversineDistanceMeters(userProfile.lat, userProfile.lng, crossing.lat, crossing.lng) : null;
             const userDistance = distM !== null ? `${formatDistance(distM)} away` : null;
 
             return (
-              <div
+              <CrossingCard
                 key={crossing.id}
-                className="mobile-card"
-                onClick={() => onSelectCrossing(crossing)}
-                style={{
-                  backgroundColor: 'var(--bg-surface)',
-                  border: '1px solid var(--border-panel)',
-                  borderLeft: `4px solid ${timing.statusBadge.color}`,
-                  padding: '16px 18px',
-                  borderRadius: 'var(--radius-lg)',
-                  boxShadow: 'var(--shadow-sm)',
-                  cursor: 'pointer',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: '10px'
-                }}
-              >
-                {/* CARD HEADER */}
-                <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '8px' }}>
-                  <div style={{ minWidth: 0, flex: 1 }}>
-                    <div style={{ fontFamily: 'var(--font-brand)', fontWeight: 800, fontSize: '16px', color: 'var(--text-primary)', lineHeight: 1.25 }}>
-                      {crossing.name}
-                    </div>
-                    <div style={{ fontSize: '11.5px', color: 'var(--text-secondary)', marginTop: '3px' }}>
-                      <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--accent-primary)', fontWeight: 600 }}>
-                        {crossing.id.replace('osm/node/', 'ASR-')}
-                      </span>
-                      {crossing.punjabiName && ` • ${crossing.punjabiName}`}
-                      {userDistance && ` • ${userDistance}`}
-                    </div>
-                  </div>
-
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <button
-                      onClick={async (e) => {
-                        e.stopPropagation();
-                        await nativeService.toggleFavoriteCrossing(crossing.id);
-                        setFavIds(nativeService.getFavoriteCrossingIds());
-                      }}
-                      title={favIds.includes(crossing.id) ? "Remove from favourites" : "Save as favourite fatak"}
-                      style={{
-                        background: 'none',
-                        border: 'none',
-                        cursor: 'pointer',
-                        padding: '4px',
-                        color: favIds.includes(crossing.id) ? '#f59e0b' : 'var(--text-muted)'
-                      }}
-                    >
-                      <Star size={16} fill={favIds.includes(crossing.id) ? '#f59e0b' : 'none'} />
-                    </button>
-
-                    <span style={{
-                      fontSize: '11px',
-                      fontWeight: 700,
-                      backgroundColor: timing.statusBadge.bg,
-                      color: timing.statusBadge.color,
-                      border: `1px solid ${timing.statusBadge.border}`,
-                      padding: '3px 9px',
-                      borderRadius: 'var(--radius-full)',
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: '5px'
-                    }}>
-                      <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: timing.statusBadge.dotColor }} />
-                      {timing.statusBadge.label}
-                    </span>
-                  </div>
-                </div>
-
-                {/* ESSENTIAL TRAIN STATUS & TIMING SUMMARY */}
-                <div style={{
-                  backgroundColor: 'var(--surface-muted)',
-                  border: '1px solid var(--border-subtle)',
-                  borderRadius: 'var(--radius-md)',
-                  padding: '11px 13px',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: '7px',
-                  fontSize: '12.5px'
-                }}>
-                  {/* 1. TRAIN STATUS & SPEED BANNER */}
-                  {timing.hasApproachingTrain && !timing.isTimingUnavailable ? (
-                    <div style={{
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: '4px',
-                      padding: '7px 9px',
-                      backgroundColor: timing.isClosedNow ? 'rgba(239, 68, 68, 0.12)' : 'rgba(245, 158, 11, 0.12)',
-                      border: `1px solid ${timing.isClosedNow ? 'rgba(239, 68, 68, 0.3)' : 'rgba(245, 158, 11, 0.3)'}`,
-                      borderRadius: 'var(--radius-sm)'
-                    }}>
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '6px' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 700, color: timing.isClosedNow ? 'var(--critical-red)' : 'var(--accent-primary)', fontSize: '12px' }}>
-                          <Train size={13} style={{ flexShrink: 0 }} />
-                          <span>#{timing.trainNumber || timing.activeTrain?.trainNumber || 'Active'} {timing.trainName || timing.activeTrain?.trainName || 'Train Approaching'}</span>
-                        </div>
-                        <span style={{ fontSize: '11px', fontFamily: 'var(--font-mono)', color: 'var(--text-primary)', fontWeight: 600 }}>
-                          {timing.trainSpeedText}
-                        </span>
-                      </div>
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '11.5px' }}>
-                        <span style={{ color: 'var(--text-secondary)' }}>Train Arrival ETA:</span>
-                        <span style={{ fontWeight: 700, color: timing.isClosedNow ? 'var(--critical-red)' : 'var(--accent-primary)', fontFamily: 'var(--font-mono)' }}>
-                          {timing.trainArrivalEtaText}
-                        </span>
-                      </div>
-                      {typeof timing.trainDistanceKm === 'number' && (
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '11px', color: 'var(--text-muted)' }}>
-                          <span>Track Distance:</span>
-                          <span style={{ fontFamily: 'var(--font-mono)' }}>~{timing.trainDistanceKm.toFixed(1)} km away</span>
-                        </div>
-                      )}
-                    </div>
-                  ) : timing.activeTrain ? (
-                    <div style={{
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: '4px',
-                      padding: '7px 9px',
-                      backgroundColor: 'rgba(56, 189, 248, 0.08)',
-                      border: '1px solid rgba(56, 189, 248, 0.22)',
-                      borderRadius: 'var(--radius-sm)'
-                    }}>
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '6px' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 700, color: 'var(--accent-cyan)', fontSize: '12px' }}>
-                          <Train size={13} style={{ flexShrink: 0 }} />
-                          <span>#{timing.activeTrain.trainNumber} {timing.activeTrain.trainName}</span>
-                        </div>
-                        <span style={{
-                          fontSize: '10.5px',
-                          fontWeight: 700,
-                          padding: '1px 6px',
-                          borderRadius: 'var(--radius-full)',
-                          backgroundColor: timing.activeTrain.isStationary ? 'rgba(245, 158, 11, 0.15)' : 'rgba(56, 189, 248, 0.15)',
-                          color: timing.activeTrain.isStationary ? '#f59e0b' : 'var(--accent-cyan)'
-                        }}>
-                          {timing.activeTrain.isStationary ? 'AT PLATFORM' : (timing.activeTrain.isReceding ? 'RECEDING' : 'MONITORED')}
-                        </span>
-                      </div>
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '11px', color: 'var(--text-secondary)' }}>
-                        <span>Train Status:</span>
-                        <span style={{ fontWeight: 600, color: 'var(--text-primary)', textAlign: 'right' }}>
-                          {timing.activeTrain.timingText || 'Corridor Monitored'}
-                        </span>
-                      </div>
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '10.5px', color: 'var(--text-muted)' }}>
-                        <span>Line:</span>
-                        <span>{timing.activeTrain.route || crossing.line || 'Amritsar Corridor'}</span>
-                      </div>
-                    </div>
-                  ) : (
-                    <div style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      padding: '6px 9px',
-                      backgroundColor: 'rgba(16, 185, 129, 0.07)',
-                      border: '1px solid rgba(16, 185, 129, 0.22)',
-                      borderRadius: 'var(--radius-sm)',
-                      fontSize: '11.5px'
-                    }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: 'var(--status-open)', fontWeight: 600 }}>
-                        <Train size={13} style={{ flexShrink: 0 }} />
-                        <span>Corridor Approach Clear</span>
-                      </div>
-                      <span style={{ color: 'var(--text-muted)', fontSize: '11px', fontFamily: 'var(--font-mono)' }}>
-                        0 trains within 15 km
-                      </span>
-                    </div>
-                  )}
-
-                  {/* 2. ROADWAY & BARRIER STATE */}
-                  {timing.isClosedNow ? (
-                    <>
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                        <span style={{ color: 'var(--text-muted)', fontSize: '11.5px' }}>Roadway status:</span>
-                        <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 700, color: 'var(--critical-red)' }}>
-                          Barriers locked · Do Not Cross
-                        </span>
-                      </div>
-                      {Boolean(timing.reopeningTimeStr) && (
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                          <span style={{ color: 'var(--text-muted)', fontSize: '11.5px' }}>Expected reopening:</span>
-                          <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 700, color: 'var(--status-open)' }}>
-                            {timing.reopeningTimeStr}{timing.reopenCountdownText ? ` (${timing.reopenCountdownText})` : ''}
-                          </span>
-                        </div>
-                      )}
-                    </>
-                  ) : timing.isClosingSoon ? (
-                    <>
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                        <span style={{ color: 'var(--text-muted)', fontSize: '11.5px' }}>Expected closure:</span>
-                        <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 700, color: 'var(--critical-red)' }}>
-                          {timing.closingTimeStr ? `${timing.closingTimeStr} (${timing.closingCountdownText || 'soon'})` : 'Closing shortly'}
-                        </span>
-                      </div>
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                        <span style={{ color: 'var(--text-muted)', fontSize: '11.5px' }}>Roadway status:</span>
-                        <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 700, color: 'var(--accent-primary)' }}>
-                          Plan to Stop · Caution
-                        </span>
-                      </div>
-                    </>
-                  ) : (
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                      <span style={{ color: 'var(--text-muted)', fontSize: '11.5px' }}>Roadway status:</span>
-                      <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 700, color: 'var(--status-open)', display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
-                        <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: 'var(--status-open)' }} />
-                        Open · Safe to Cross
-                      </span>
-                    </div>
-                  )}
-
-                  {/* 3. Estimated closure duration — strictly NEVER shown when fatak is OPEN */}
-                  {!timing.isTimingUnavailable && !timing.isOpenPassage && (
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                      <span style={{ color: 'var(--text-muted)', fontSize: '11.5px' }}>Estimated closure:</span>
-                      <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 700, color: 'var(--accent-emphasis)' }}>
-                        {timing.closureDurationText}
-                        {timing.isMultiTrain && ` (${timing.trainCount} trains)`}
-                      </span>
-                    </div>
-                  )}
-
-                  {/* 4. When timing is unconfirmed / unavailable */}
-                  {timing.isTimingUnavailable && !timing.activeTrain && (
-                    <div style={{ fontSize: '11px', color: 'var(--text-muted)', lineHeight: '1.3' }}>
-                      Live track status is currently updating. Proceed with caution.
-                    </div>
-                  )}
-
-                  {/* 5. Last train passed if available and no active approaching train */}
-                  {!timing.hasApproachingTrain && timing.lastTrainPassedText && (
-                    <div style={{ fontSize: '10.5px', color: 'var(--text-muted)', borderTop: '1px dashed var(--border-subtle)', paddingTop: '3px' }}>
-                      {timing.lastTrainPassedText}
-                    </div>
-                  )}
-                </div>
-
-                {/* BOTTOM ACTION: View Details */}
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '2px' }} onClick={(e) => e.stopPropagation()}>
-                  <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-                    {crossing.locality || 'Amritsar Roadway'}
-                  </div>
-                  <button
-                    onClick={() => onSelectCrossing(crossing)}
-                    className="btn btn-secondary"
-                    style={{
-                      padding: '6px 14px',
-                      fontSize: '11.5px',
-                      fontWeight: 700,
-                      gap: '5px',
-                      borderRadius: 'var(--radius-sm)'
-                    }}
-                  >
-                    <span>View Details</span>
-                    <ArrowRight size={13} />
-                  </button>
-                </div>
-              </div>
+                crossing={crossing}
+                trains={trains}
+                now={now}
+                userDistance={userDistance}
+                isFavorite={favIds.includes(crossing.id)}
+                onToggleFavorite={handleToggleFavorite}
+                onSelect={onSelectCrossing}
+              />
             );
           })}
         </div>

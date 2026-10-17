@@ -616,10 +616,14 @@ export class SupabaseService {
       insertedReport = Array.isArray(insertRes) ? insertRes[0] : reportRow;
     } catch (err) {
       console.warn('[SupabaseService] Table insert error:', err.message);
-      // Retain in in-memory resilience cache
       reportRow.id = `mem_${Date.now()}`;
-      this.recentSurveysCache.set(reportRow.id, reportRow);
       insertedReport = reportRow;
+    }
+
+    // Retain in in-memory resilience cache for instant multi-user consensus & fallback
+    if (insertedReport) {
+      const cacheKey = insertedReport.id || `mem_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+      this.recentSurveysCache.set(cacheKey, insertedReport);
     }
 
     // 7. Store Flags in report_flags
@@ -644,16 +648,42 @@ export class SupabaseService {
     if (isPhotoVerified && !isSuspicious && distanceToCrossingMeters < 500) {
       try {
         const fifteenMinAgo = new Date(Date.now() - 15 * 60 * 1000).toISOString();
-        const recentReports = await this.queryDb(
-          'crossing_reports',
-          `crossing_id=eq.${encodeURIComponent(canonicalCrossing.id)}&observed_status=eq.${encodeURIComponent(observedStatus)}&is_photo_verified=eq.true&is_suspicious=eq.false&created_at=gte.${fifteenMinAgo}`
-        );
+        const recentReports = [];
+        try {
+          const dbReports = await this.queryDb(
+            'crossing_reports',
+            `crossing_id=eq.${encodeURIComponent(canonicalCrossing.id)}&observed_status=eq.${encodeURIComponent(observedStatus)}&is_photo_verified=eq.true&is_suspicious=eq.false&created_at=gte.${fifteenMinAgo}`
+          );
+          if (Array.isArray(dbReports)) {
+            recentReports.push(...dbReports);
+          }
+        } catch (e) {}
 
-        if (Array.isArray(recentReports)) {
-          const distinctUserIds = new Set(recentReports.map(r => r.user_id));
-          if (distinctUserIds.size >= 2) {
-            consensusReached = true;
-            // Upgrade reports to COMMUNITY_CONFIRMED
+        // Merge in-memory verified cache reports within 15m window
+        for (const cached of this.recentSurveysCache.values()) {
+          if (
+            cached.crossing_id === canonicalCrossing.id &&
+            cached.observed_status === observedStatus &&
+            cached.is_photo_verified === true &&
+            !cached.is_suspicious &&
+            new Date(cached.created_at).getTime() >= (Date.now() - 15 * 60 * 1000)
+          ) {
+            recentReports.push(cached);
+          }
+        }
+
+        const distinctUserIds = new Set(recentReports.map(r => r.user_id));
+        if (insertedReport?.user_id) {
+          distinctUserIds.add(insertedReport.user_id);
+        }
+
+        if (distinctUserIds.size >= 2) {
+          consensusReached = true;
+          if (insertedReport) {
+            insertedReport.validation_status = 'COMMUNITY_CONFIRMED';
+          }
+          // Upgrade reports in DB to COMMUNITY_CONFIRMED
+          try {
             await this.queryDb(
               'crossing_reports',
               `crossing_id=eq.${encodeURIComponent(canonicalCrossing.id)}&observed_status=eq.${encodeURIComponent(observedStatus)}&created_at=gte.${fifteenMinAgo}`,
@@ -662,8 +692,10 @@ export class SupabaseService {
                 body: { validation_status: 'COMMUNITY_CONFIRMED' }
               }
             );
+          } catch (e) {}
 
-            // Record in audit moderation log
+          // Record in audit moderation log
+          try {
             await this.queryDb('report_moderation_log', '', {
               method: 'POST',
               body: {
@@ -673,7 +705,7 @@ export class SupabaseService {
                 notes: `Consensus verified: ${distinctUserIds.size} distinct users confirmed ${observedStatus} at ${canonicalCrossing.name}.`
               }
             });
-          }
+          } catch (e) {}
         }
       } catch (e) {}
     }
@@ -914,9 +946,28 @@ export function createSupabaseRouter() {
   // Submit Crossing Survey
   router.post('/surveys/submit', async (req, res) => {
     try {
-      const user = await supabaseService.verifyAuthToken(req.headers.authorization);
+      let user = await supabaseService.verifyAuthToken(req.headers.authorization);
       if (!user) {
-        return res.status(401).json({ success: false, error: 'Authentication required' });
+        // Auto-provision an anonymous commuter session if token is missing or expired
+        const { submitterLat, submitterLng } = req.body || {};
+        try {
+          const onboarded = await supabaseService.onboardUser({
+            displayName: 'Commuter',
+            gpsConsent: true,
+            lat: typeof submitterLat === 'number' ? submitterLat : null,
+            lng: typeof submitterLng === 'number' ? submitterLng : null
+          });
+          if (onboarded && onboarded.user) {
+            user = onboarded.user;
+          }
+        } catch (onboardErr) {
+          console.warn('[SupabaseRouter] Auto-onboard fallback on survey submit:', onboardErr.message);
+          // If Supabase Auth is unreachable, fallback to a resilient device-anchored user ID
+          user = {
+            id: `anon_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
+            displayName: 'Commuter'
+          };
+        }
       }
       const result = await supabaseService.submitSurvey(user, req.body || {});
       res.status(201).json(result);

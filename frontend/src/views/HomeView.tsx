@@ -393,7 +393,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
               <div style={{ fontSize: '10px', textTransform: 'uppercase', fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.04em' }}>
                 2. When Might It Close?
               </div>
-              <div style={{
+              <div className="tabular-nums" style={{
                 fontSize: '14px',
                 fontWeight: 800,
                 marginTop: '4px',
@@ -444,7 +444,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
               <div style={{ fontSize: '10px', textTransform: 'uppercase', fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.04em' }}>
                 3. When Can I Cross?
               </div>
-              <div style={{
+              <div className="tabular-nums" style={{
                 fontSize: '14px',
                 fontWeight: 800,
                 marginTop: '4px',
@@ -594,42 +594,49 @@ export const HomeView: React.FC<HomeViewProps> = ({
                   padding: '14px',
                   cursor: 'pointer',
                   boxShadow: 'var(--shadow-sm)',
-                  transition: 'transform 0.15s ease'
+                  display: 'flex',
+                  flexDirection: 'column',
+                  justifyContent: 'space-between',
+                  minHeight: '112px',
+                  transition: 'transform 0.15s ease, border-left-color 0.25s ease, border-color 0.25s ease, background-color 0.25s ease'
                 }}
               >
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
-                  <span style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text-primary)' }}>
-                    {crossing.name}
-                  </span>
-                  <span style={{
-                    fontSize: '10.5px',
-                    fontWeight: 700,
-                    padding: '2px 7px',
-                    borderRadius: 'var(--radius-full)',
-                    backgroundColor: timing.statusBadge.bg,
-                    color: timing.statusBadge.color,
-                    border: `1px solid ${timing.statusBadge.border}`
-                  }}>
-                    {timing.statusBadge.label}
-                  </span>
-                </div>
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
+                    <span style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text-primary)' }}>
+                      {crossing.name}
+                    </span>
+                    <span style={{
+                      fontSize: '10.5px',
+                      fontWeight: 700,
+                      padding: '2px 7px',
+                      borderRadius: 'var(--radius-full)',
+                      backgroundColor: timing.statusBadge.bg,
+                      color: timing.statusBadge.color,
+                      border: `1px solid ${timing.statusBadge.border}`,
+                      transition: 'background-color 0.25s ease, color 0.25s ease'
+                    }}>
+                      {timing.statusBadge.label}
+                    </span>
+                  </div>
 
-                <div style={{ fontSize: '11.5px', color: 'var(--text-muted)' }}>
-                  {crossing.punjabiName} • {crossing.locality}
+                  <div style={{ fontSize: '11.5px', color: 'var(--text-muted)' }}>
+                    {crossing.punjabiName} • {crossing.locality}
+                  </div>
                 </div>
 
                 {/* Train status & timing */}
                 {timing.activeTrain ? (
                   <div style={{ fontSize: '11px', color: 'var(--accent-cyan)', marginTop: '8px', display: 'flex', alignItems: 'center', gap: '5px', fontWeight: 600 }}>
                     <Train size={12} color="var(--accent-cyan)" />
-                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    <span className="tabular-nums" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       #{timing.activeTrain.trainNumber} {timing.activeTrain.trainName} • {timing.activeTrain.timingText || timing.activeTrain.speedText}
                     </span>
                   </div>
                 ) : (
                   <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '8px', display: 'flex', alignItems: 'center', gap: '5px' }}>
                     <Clock size={12} color="var(--status-open)" />
-                    <span>
+                    <span className="tabular-nums">
                       {timing.isClosedNow ? (
                         `Expected reopen ${timing.reopeningTimeStr ? `at ${timing.reopeningTimeStr}` : 'shortly'}${timing.reopenCountdownText ? ` (${timing.reopenCountdownText})` : ''}`
                       ) : timing.isClosingSoon ? (

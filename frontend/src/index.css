@@ -271,6 +271,56 @@ html, body, .app-shell, .app-main, .page-container, .panel, .panel-elevated, .ca
   font-family: var(--font-brand);
 }
 
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+  -moz-font-feature-settings: "tnum";
+  -webkit-font-feature-settings: "tnum";
+  font-feature-settings: "tnum";
+}
+
+/* Crossing Mobile Card - Consistent Footprint & Calm Transitions */
+.mobile-card {
+  position: relative;
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-panel);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  padding: 16px 18px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 248px;
+  transition: border-color 0.25s ease, border-left-color 0.25s ease, background-color 0.25s ease, box-shadow 0.25s ease, transform 0.15s ease;
+  contain: content;
+}
+
+.mobile-card:hover {
+  border-color: rgba(56, 189, 248, 0.35);
+  box-shadow: var(--shadow-md);
+  transform: translateY(-1px);
+}
+
+.mobile-card:active {
+  transform: translateY(0);
+}
+
+/* Calm Breathing Indicator for Live Telemetry */
+@keyframes calmDotPulse {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.65;
+    transform: scale(0.92);
+  }
+}
+
+.pulse-calm {
+  animation: calmDotPulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
 /* App Shell Layout */
 .app-shell {
   display: flex;

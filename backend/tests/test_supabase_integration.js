@@ -227,10 +227,10 @@ await test('Anti-Fake Engine detects duplicate image hash across submissions', a
 console.log('\n--- 4. AUDITING CONSENSUS RULE & ARBITRATION ---');
 
 await test('Multi-observer consensus: 2 independent verified users promote status to COMMUNITY_CONFIRMED', async () => {
-  // Fresh Crossing: Bhagtanwala Dana Mandi / Hakima Gate Crossing
-  const crossingForConsensus = 'osm/node/568013319';
-  const c2Lat = 31.609875;
-  const c2Lng = 74.86049;
+  // Fresh Crossing: Tarn Taran Road Phatak (SH21 / Sultanwind Link)
+  const crossingForConsensus = 'osm/node/568013331';
+  const c2Lat = 31.614367;
+  const c2Lng = 74.854287;
 
   // Create two independent users
   const user1 = await supabaseService.onboardUser({

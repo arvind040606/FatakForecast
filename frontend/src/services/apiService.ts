@@ -1205,11 +1205,69 @@ class RailwayAPIService {
 
   public async submitCrossingSurvey(surveyInput: CrossingSurveyInput) {
     const baseUrl = this.getBaseUrl();
-    const res = await fetch(`${baseUrl}/api/surveys/submit`, {
+    let authHeader = this.getAuthHeader();
+
+    // If no token is cached yet, automatically onboard first
+    if (!authHeader['Authorization']) {
+      try {
+        const onboarded = await this.onboardUser(
+          'Commuter',
+          true,
+          surveyInput.submitterLat,
+          surveyInput.submitterLng
+        );
+        if (onboarded && onboarded.token) {
+          authHeader = { 'Authorization': `Bearer ${onboarded.token}` };
+          const prof = nativeService.getUserLocationProfile();
+          if (prof) {
+            await nativeService.setUserLocationProfile({
+              ...prof,
+              userId: onboarded.user?.id || onboarded.profile?.user_id || prof.userId,
+              supabaseToken: onboarded.token
+            });
+          }
+        }
+      } catch (e) {
+        console.warn('[API] Auto-onboard error before survey submit:', e);
+      }
+    }
+
+    let res = await fetch(`${baseUrl}/api/surveys/submit`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...this.getAuthHeader() },
+      headers: { 'Content-Type': 'application/json', ...authHeader },
       body: JSON.stringify(surveyInput)
     });
+
+    // If 401 Unauthorized, automatically re-onboard session and retry once
+    if (res.status === 401) {
+      try {
+        const onboarded = await this.onboardUser(
+          'Commuter',
+          true,
+          surveyInput.submitterLat,
+          surveyInput.submitterLng
+        );
+        if (onboarded && onboarded.token) {
+          authHeader = { 'Authorization': `Bearer ${onboarded.token}` };
+          const prof = nativeService.getUserLocationProfile();
+          if (prof) {
+            await nativeService.setUserLocationProfile({
+              ...prof,
+              userId: onboarded.user?.id || onboarded.profile?.user_id || prof.userId,
+              supabaseToken: onboarded.token
+            });
+          }
+          res = await fetch(`${baseUrl}/api/surveys/submit`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...authHeader },
+            body: JSON.stringify(surveyInput)
+          });
+        }
+      } catch (e) {
+        console.warn('[API] Re-onboard error on survey submit 401:', e);
+      }
+    }
+
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: 'Survey submission failed' }));
       throw new Error(err.error || 'Survey submission failed');
