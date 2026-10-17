@@ -85,6 +85,56 @@ function advanceAlongPolyline(coords, startProgress, distKm, direction = 'UP') {
   return coords[finalIdx];
 }
 
+export function parseRailDateTime(str, referenceDate = new Date()) {
+  if (!str || typeof str !== 'string') return null;
+  const trimmed = str.trim();
+  if (trimmed === 'SRC' || trimmed === 'DSTN' || trimmed === '-' || trimmed.toLowerCase() === 'null') return null;
+  if (trimmed.includes('T') || trimmed.endsWith('Z')) {
+    const d = new Date(trimmed);
+    return isNaN(d.getTime()) ? null : d;
+  }
+  // Format: "HH:mm DD-MMM" (e.g. "12:30 17-Oct")
+  const m1 = trimmed.match(/(\d{1,2}):(\d{2})\s+(\d{1,2})-([A-Za-z]{3})/);
+  if (m1) {
+    const months = { jan:0, feb:1, mar:2, apr:3, may:4, jun:5, jul:6, aug:7, sep:8, oct:9, nov:10, dec:11 };
+    const mon = months[m1[4].toLowerCase()];
+    if (mon !== undefined) {
+      const year = referenceDate.getFullYear();
+      const hour = parseInt(m1[1], 10);
+      const min = parseInt(m1[2], 10);
+      const day = parseInt(m1[3], 10);
+      // Indian Railways operates in IST (UTC+5:30)
+      const utcMs = Date.UTC(year, mon, day, hour - 5, min - 30);
+      return new Date(utcMs);
+    }
+  }
+  // Format: "HH:mm" (e.g. "12:30")
+  const m2 = trimmed.match(/^(\d{1,2}):(\d{2})$/);
+  if (m2) {
+    const hour = parseInt(m2[1], 10);
+    const min = parseInt(m2[2], 10);
+    const d = new Date(referenceDate);
+    const istOffsetMs = (5 * 60 + 30) * 60 * 1000;
+    const istNow = new Date(d.getTime() + istOffsetMs);
+    const istTarget = new Date(Date.UTC(istNow.getUTCFullYear(), istNow.getUTCMonth(), istNow.getUTCDate(), hour - 5, min - 30));
+    return istTarget;
+  }
+  const d = new Date(trimmed);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+export function formatISTTime(dateOrMs) {
+  if (!dateOrMs) return null;
+  const ms = typeof dateOrMs === 'number' ? dateOrMs : (dateOrMs instanceof Date ? dateOrMs.getTime() : new Date(dateOrMs).getTime());
+  if (isNaN(ms)) return null;
+  return new Date(ms).toLocaleTimeString('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true
+  });
+}
+
 function withTimeout(promise, ms = 6000, fallbackMessage = 'Operation timed out') {
   return Promise.race([
     promise,
@@ -532,18 +582,93 @@ export class RailkitService {
       else corridorId = 'CORR_ASR_JUC';
     }
 
+    // 1. Build full route schedule array from RailKit route stops with IST timetable timestamps
+    const now = Date.now();
+    const schedule = [];
+    if (Array.isArray(data.route)) {
+      data.route.forEach((r, idx) => {
+        const schArr = r.arrival?.scheduled || r.schArr || r.scheduledArrival || null;
+        const schDep = r.departure?.scheduled || r.schDep || r.scheduledDeparture || null;
+        const actArr = r.arrival?.actual || r.actArr || r.actualArrival || null;
+        const actDep = r.departure?.actual || r.actDep || r.actualDeparture || null;
+        const delayArr = typeof r.arrival?.delay === 'number' ? r.arrival.delay : (typeof r.delayArr === 'number' ? r.delayArr : 0);
+        const delayDep = typeof r.departure?.delay === 'number' ? r.departure.delay : (typeof r.delayDep === 'number' ? r.delayDep : 0);
+
+        const schArrDate = parseRailDateTime(schArr);
+        const schDepDate = parseRailDateTime(schDep);
+        const actArrDate = parseRailDateTime(actArr);
+        const actDepDate = parseRailDateTime(actDep);
+
+        const expectedArrivalMs = actArrDate ? actArrDate.getTime() : (schArrDate ? schArrDate.getTime() + delayArr * 60000 : null);
+        const expectedDepartureMs = actDepDate ? actDepDate.getTime() : (schDepDate ? schDepDate.getTime() + delayDep * 60000 : null);
+
+        schedule.push({
+          sequence: r.sequence || idx + 1,
+          stationCode: r.stnCode || r.stationCode || '',
+          stationName: r.stnName || r.stationName || r.stnCode || '',
+          isHalt: Boolean(r.isHalt),
+          status: r.status || 'upcoming',
+          platform: r.platform || null,
+          distance: typeof r.distance === 'number' ? r.distance : 0,
+          scheduledArrival: schArr,
+          scheduledDeparture: schDep,
+          actualArrival: actArr,
+          actualDeparture: actDep,
+          delayArrival: delayArr,
+          delayDeparture: delayDep,
+          expectedArrivalMs,
+          expectedDepartureMs,
+          expectedArrivalIso: expectedArrivalMs ? new Date(expectedArrivalMs).toISOString() : null,
+          expectedDepartureIso: expectedDepartureMs ? new Date(expectedDepartureMs).toISOString() : null,
+          expectedArrivalFormatted: formatISTTime(expectedArrivalMs),
+          expectedDepartureFormatted: formatISTTime(expectedDepartureMs),
+          coachPosition
+        });
+      });
+    }
+
+    if (schedule.length > 0 && this.scheduleCache) {
+      this.scheduleCache.set(trainNumber, schedule);
+    }
+
     // Status Normalization
     const isCancelled = statusRaw === 'cancelled' || statusRaw === 'canceled' ||
       (Array.isArray(data.exceptions) && data.exceptions.some(e => String(e?.type || '').toUpperCase() === 'CANCELLED'));
+
+    // Check origin stop and departure timings
+    const originStop = schedule[0] || null;
+    const originExpectedDepMs = originStop?.expectedDepartureMs || 
+      (parseRailDateTime(data.actualDeparture)?.getTime()) || 
+      (parseRailDateTime(data.scheduledDeparture) ? parseRailDateTime(data.scheduledDeparture).getTime() + (delayMinutes * 60000) : null);
+
+    const reportedDistFromOrigin = typeof data.currentLocation?.distanceFromOriginKm === 'number'
+      ? data.currentLocation.distanceFromOriginKm
+      : null;
+
+    const isPhysicallyAtOrigin = Boolean(
+      (currentStationCode === sourceCode || sourceName.toLowerCase().includes('amritsar')) &&
+      (!reportedDistFromOrigin || reportedDistFromOrigin < 0.5)
+    );
+
+    const isOriginDepartureInFuture = Boolean(
+      originExpectedDepMs && (originExpectedDepMs > (now - 60000))
+    );
+
+    const isRescheduledAwaitingDeparture = Boolean(
+      isPhysicallyAtOrigin &&
+      isOriginDepartureInFuture &&
+      (statusRaw === 'rescheduled' || originStop?.status === 'at-station' || statusRaw === 'at-station' || statusRaw === 'start')
+    );
 
     const isNotStarted = !isCancelled && (
       statusRaw === 'not-started' ||
       statusRaw === 'not_started' ||
       statusRaw === 'yet to start' ||
-      statusText.toLowerCase().includes('yet to start')
+      statusText.toLowerCase().includes('yet to start') ||
+      isRescheduledAwaitingDeparture
     );
 
-    // 1. Geographic Coordinate Resolution
+    // 2. Geographic Coordinate Resolution
     // Note: Station node coordinates represent station progress, NOT direct locomotive satellite GPS.
     let lat = null;
     let lng = null;
@@ -597,7 +722,7 @@ export class RailkitService {
       currentStationName = `${currentStationName} (near ${data.previousHalt.stnName})`;
     }
 
-    // 2. Geographic Sector Validation (85 km operational sector)
+    // 3. Geographic Sector Validation (85 km operational sector)
     let isWithinSector = false;
     let distanceFromAmritsarKm = null;
     if (typeof lat === 'number' && typeof lng === 'number' && lat !== 0 && lng !== 0) {
@@ -608,9 +733,6 @@ export class RailkitService {
 
     // Authoritative Provider Journey Progress Validation:
     // If the train departed Amritsar (source ASR) and provider confirms it traveled > 85 km (e.g. 283 km away near Ambala/Delhi)
-    const reportedDistFromOrigin = typeof data.currentLocation?.distanceFromOriginKm === 'number'
-      ? data.currentLocation.distanceFromOriginKm
-      : null;
     if ((sourceCode === 'ASR' || sourceName.toLowerCase().includes('amritsar')) && reportedDistFromOrigin !== null && reportedDistFromOrigin > GeographicValidator.AMRITSAR_SECTOR_RADIUS_KM) {
       isWithinSector = false;
       if (distanceFromAmritsarKm === null || distanceFromAmritsarKm < reportedDistFromOrigin) {
@@ -618,28 +740,36 @@ export class RailkitService {
       }
     }
 
-    // 3. Operational Status Classification
+    // 4. Operational Status Classification
     const isAtOriginStation = Boolean(
       currentStationCode === sourceCode &&
       (!reportedDistFromOrigin || reportedDistFromOrigin < 0.5) &&
       (statusRaw === 'start' || statusRaw === 'at-station' || isNotStarted)
     );
 
+    // Intermediate halt check
+    const currentStop = schedule.find(s => (s.stationCode === currentStationCode || s.stationCode === data.currentLocation?.nextStation?.stnCode));
+    const isAtIntermediateStation = Boolean(
+      currentStop &&
+      currentStop.status === 'at-station' &&
+      currentStop.expectedDepartureMs &&
+      currentStop.expectedDepartureMs > (now - 60000)
+    );
+
     let operationalStatus = 'IN_TRANSIT';
     if (isCancelled) {
       operationalStatus = 'CANCELLED';
     } else if (isNotStarted) {
-      operationalStatus = 'NOT_STARTED';
+      operationalStatus = 'YET_TO_START';
     } else if (statusRaw === 'completed' || statusRaw === 'terminated' || statusRaw === 'end' || currentStationCode === destCode) {
       operationalStatus = 'TERMINATED';
     } else if (!isWithinSector) {
       operationalStatus = 'OUT_OF_SECTOR';
-    } else if (isAtOriginStation) {
+    } else if (isAtOriginStation || isAtIntermediateStation) {
       operationalStatus = 'PLATFORM_BOARDING';
     }
 
-    // 4. Data Freshness & State Classification
-    const now = Date.now();
+    // 5. Data Freshness & State Classification
     const updatedMs = new Date(lastUpdatedAt).getTime();
     const ageMinutes = isNaN(updatedMs) ? 999 : (now - updatedMs) / (60 * 1000);
     const isStale = ageMinutes > 15;
@@ -651,53 +781,28 @@ export class RailkitService {
       dataState = 'SIMULATED';
     } else if (isCancelled) {
       dataState = 'CANCELLED';
-    } else if (isNotStarted) {
-      dataState = 'SCHEDULED';
     } else if (operationalStatus === 'TERMINATED') {
       dataState = 'TERMINATED';
     } else if (isStale) {
       dataState = 'STALE';
-    } else if ((operationalStatus === 'IN_TRANSIT' || operationalStatus === 'PLATFORM_BOARDING') && typeof lat === 'number' && typeof lng === 'number' && currentStationCode !== 'UNKNOWN') {
+    } else if ((operationalStatus === 'IN_TRANSIT' || operationalStatus === 'PLATFORM_BOARDING' || operationalStatus === 'YET_TO_START') && typeof lat === 'number' && typeof lng === 'number' && currentStationCode !== 'UNKNOWN') {
       dataState = 'LIVE';
+    } else if (isNotStarted) {
+      dataState = 'SCHEDULED';
     } else if (operationalStatus === 'IN_TRANSIT') {
       dataState = 'UNAVAILABLE';
     } else {
       dataState = 'SCHEDULED';
     }
 
-    // 5. Build full route schedule array from RailKit route stops
-    const schedule = [];
-    if (Array.isArray(data.route)) {
-      data.route.forEach((r, idx) => {
-        const schArr = r.arrival?.scheduled || r.schArr || r.scheduledArrival || null;
-        const schDep = r.departure?.scheduled || r.schDep || r.scheduledDeparture || null;
-        const actArr = r.arrival?.actual || r.actArr || r.actualArrival || null;
-        const actDep = r.departure?.actual || r.actDep || r.actualDeparture || null;
-        const delayArr = typeof r.arrival?.delay === 'number' ? r.arrival.delay : (typeof r.delayArr === 'number' ? r.delayArr : 0);
-        const delayDep = typeof r.departure?.delay === 'number' ? r.departure.delay : (typeof r.delayDep === 'number' ? r.delayDep : 0);
-
-        schedule.push({
-          sequence: r.sequence || idx + 1,
-          stationCode: r.stnCode || r.stationCode || '',
-          stationName: r.stnName || r.stationName || r.stnCode || '',
-          isHalt: Boolean(r.isHalt),
-          status: r.status || 'upcoming',
-          platform: r.platform || null,
-          distance: typeof r.distance === 'number' ? r.distance : 0,
-          scheduledArrival: schArr,
-          scheduledDeparture: schDep,
-          actualArrival: actArr,
-          actualDeparture: actDep,
-          delayArrival: delayArr,
-          delayDeparture: delayDep,
-          coachPosition
-        });
-      });
-    }
-
-    if (schedule.length > 0 && this.scheduleCache) {
-      this.scheduleCache.set(trainNumber, schedule);
-    }
+    const isStationary = Boolean(
+      operationalStatus === 'YET_TO_START' ||
+      operationalStatus === 'PLATFORM_BOARDING' ||
+      operationalStatus === 'TERMINATED' ||
+      isNotStarted ||
+      isAtOriginStation ||
+      isAtIntermediateStation
+    );
 
     const sectionalSpeed = (() => {
       const tNum = String(trainNumber);
@@ -711,9 +816,13 @@ export class RailkitService {
     })();
 
     const hasLiveSpeed = typeof data.currentLocation?.speedKmh === 'number' && data.currentLocation.speedKmh > 0;
-    const computedSpeed = (operationalStatus === 'TERMINATED' || isNotStarted || operationalStatus === 'PLATFORM_BOARDING')
-      ? 0
-      : (hasLiveSpeed ? data.currentLocation.speedKmh : sectionalSpeed);
+    const computedSpeed = isStationary ? 0 : (hasLiveSpeed ? data.currentLocation.speedKmh : sectionalSpeed);
+
+    const expectedDepartureTime = isNotStarted ? originExpectedDepMs : (currentStop?.expectedDepartureMs || null);
+    const expectedDepartureFormatted = formatISTTime(expectedDepartureTime);
+
+    const platformNum = originStop?.platform || currentStop?.platform || null;
+    const platformStr = platformNum ? ` (Platform ${platformNum})` : '';
 
     return {
       id: trainNumber,
@@ -727,18 +836,24 @@ export class RailkitService {
       direction,
       // Accuracy rules: Journey average speed is NOT live speed
       speedKmH: computedSpeed,
-      hasLiveSpeedMeasurement: Boolean(operationalStatus === 'PLATFORM_BOARDING' || operationalStatus === 'TERMINATED' || isNotStarted || hasLiveSpeed),
-      speedSource: hasLiveSpeed ? 'PROVIDER_LIVE_SPEED' : (operationalStatus === 'PLATFORM_BOARDING' ? 'AT_STATION_PLATFORM' : 'SECTIONAL_TIMETABLE'),
-      liveSpeedKmH: hasLiveSpeed ? data.currentLocation.speedKmh : (operationalStatus === 'PLATFORM_BOARDING' ? 0 : null),
+      hasLiveSpeedMeasurement: Boolean(isStationary || hasLiveSpeed),
+      speedSource: isStationary ? 'AT_STATION_PLATFORM' : (hasLiveSpeed ? 'PROVIDER_LIVE_SPEED' : 'SECTIONAL_TIMETABLE'),
+      liveSpeedKmH: hasLiveSpeed ? data.currentLocation.speedKmh : (isStationary ? 0 : null),
       sectionalSpeedKmH: sectionalSpeed,
+      isStationary,
+      isStationaryAtPlatform: isStationary,
+      movementStatus: isStationary ? 'STOPPED' : 'ROLLING',
       currentCoordIndex: null,
       lat: (typeof lat === 'number') ? Number(lat.toFixed(6)) : null,
       lng: (typeof lng === 'number') ? Number(lng.toFixed(6)) : null,
       bearing: isNotStarted ? 0 : (direction === 'UP' ? 110 : 290),
       currentStationCode,
       currentStationName: `${currentStationName} (${currentStationCode})`,
+      expectedDeparture: expectedDepartureFormatted,
+      expectedDepartureMs: expectedDepartureTime,
+      expectedDepartureFormatted,
       lastReportedLocation: isNotStarted
-        ? `${currentStationName} (${currentStationCode}) • Origin Station (Yet to start)`
+        ? `${currentStationName} (${currentStationCode})${platformStr} • Scheduled Departure: ${expectedDepartureFormatted || 'Upcoming'}${delayMinutes ? ` (Delay: ${delayMinutes}m)` : ''}`
         : (isCancelled
             ? `${currentStationName} • Status: Cancelled`
             : `${currentStationName} • Delay: ${delayMinutes}m`),
@@ -752,7 +867,7 @@ export class RailkitService {
       apiRetrievalTimestamp: measuredPingTime || new Date().toISOString(),
       observationAccuracy: 'STATION_NODE_PROJECTION',
       serviceStatus: isNotStarted
-        ? `Scheduled service: ${trainName} (Yet to start from ${sourceName})`
+        ? `Yet to start from ${sourceName}${platformStr} • Expected Departure: ${expectedDepartureFormatted || 'Upcoming'}${delayMinutes ? ` (Delay: ${delayMinutes}m)` : ''}`
         : (operationalStatus === 'TERMINATED'
             ? `Completed journey at ${destName}`
             : (isWithinSector

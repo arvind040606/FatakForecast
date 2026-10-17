@@ -554,13 +554,41 @@ export class TrainDetectionEngine {
           train.isStationary === true ||
           train.status === 'PLATFORM_BOARDING' ||
           train.status === 'HALTED' ||
+          train.status === 'YET_TO_START' ||
+          train.status === 'NOT_STARTED' ||
           train.operationalStatus === 'PLATFORM_BOARDING' ||
+          train.operationalStatus === 'YET_TO_START' ||
           (train.dataState === 'SCHEDULED' && (train.speedKmH === 0 || train.speedKmH === null)) ||
           ((train.speedKmH === 0 || train.liveSpeedKmH === 0) && train.isAtStation === true)
         );
 
         if (isStationaryAtPlatform) {
           stationaryPlatformTrains.push(train);
+
+          // If train has an expected future departure time on this corridor, evaluate its upcoming arrival:
+          const hasFutureDeparture = Boolean(
+            (train.expectedDepartureMs && train.expectedDepartureMs > (Date.now() - 60000)) ||
+            (train.schedule?.[0]?.expectedDepartureMs && train.schedule[0].expectedDepartureMs > (Date.now() - 60000))
+          );
+          if (!hasFutureDeparture) {
+            continue;
+          }
+          // Train has future departure: check track connectivity so we can predict exact arrival ETA!
+          const geoCheck = GeographicValidator.validateApproachingCrossing(
+            train,
+            crossing,
+            corridorCoordinates
+          );
+          if (geoCheck.isValid && geoCheck.trackDistanceKm !== null && geoCheck.isApproaching) {
+            validApproachingTrains.push({
+              train,
+              trackDistanceKm: geoCheck.trackDistanceKm,
+              isApproaching: true,
+              isTraversing: false,
+              isAwaitingDeparture: true,
+              expectedDepartureMs: train.expectedDepartureMs || train.schedule?.[0]?.expectedDepartureMs
+            });
+          }
           continue;
         }
 
@@ -821,7 +849,15 @@ export class TrainDetectionEngine {
     for (const item of validApproachingTrains) {
       const train = item.train;
 
-      // Handle stopped trains (e.g. at platform, siding, or halt)
+      // Check if train is awaiting a scheduled/rescheduled future departure
+      const depAnchorMs = item.expectedDepartureMs || train.expectedDepartureMs || (train.schedule?.[0]?.expectedDepartureMs);
+      const isAwaitingFutureDeparture = Boolean(
+        (item.isAwaitingDeparture || train.status === 'YET_TO_START' || train.status === 'NOT_STARTED' || train.status === 'PLATFORM_BOARDING' || train.isStationaryAtPlatform) &&
+        depAnchorMs &&
+        depAnchorMs > (now - 60000)
+      );
+
+      // Handle stopped trains (e.g. at platform, siding, or halt without future timetable departure)
       const isStationary = train.status === 'STATIONARY' || 
                            train.status === 'PLATFORM_BOARDING' || 
                            train.status === 'NOT_STARTED' ||
@@ -830,7 +866,7 @@ export class TrainDetectionEngine {
                            train.movementStatus === 'STOPPED' ||
                            train.speedKmH === 0;
 
-      if (isStationary && item.trackDistanceKm > 0.15) {
+      if (isStationary && !isAwaitingFutureDeparture && item.trackDistanceKm > 0.15) {
         // Stopped away from crossing: cannot trigger gate closure or produce fabricated ETA
         corridorNearbyTrains.push({
           train: item.train,
@@ -848,7 +884,16 @@ export class TrainDetectionEngine {
       let etaCalculationMethod = 'UNAVAILABLE';
       let predictionConfidence = 'MODERATE';
 
-      if (hasLiveSpeedMeasurement && train.speedKmH > 0) {
+      if (isAwaitingFutureDeparture) {
+        const fallbackSpeed = train.sectionalSpeedKmH || 55;
+        speedKmH = Math.max(
+          CROSSING_DETECTION_THRESHOLDS.MIN_ROLLING_SPEED_KMPH,
+          Math.min(CROSSING_DETECTION_THRESHOLDS.MAX_SECTION_SPEED_KMPH, fallbackSpeed)
+        );
+        speedSource = 'SECTIONAL_TIMETABLE';
+        etaCalculationMethod = 'TIMETABLE_DEPARTURE_SYNTHESIS';
+        predictionConfidence = 'HIGH';
+      } else if (hasLiveSpeedMeasurement && train.speedKmH > 0) {
         speedKmH = Math.max(
           CROSSING_DETECTION_THRESHOLDS.MIN_ROLLING_SPEED_KMPH,
           Math.min(CROSSING_DETECTION_THRESHOLDS.MAX_SECTION_SPEED_KMPH, train.speedKmH)
@@ -921,6 +966,29 @@ export class TrainDetectionEngine {
         passageTime = new Date(now);
         closeTime = new Date(now - (alreadyTraversedSec + CROSSING_DETECTION_THRESHOLDS.CLOSURE_LEAD_SEC) * 1000);
         openTime = new Date(reopenMs);
+        crossBy = new Date(closeTime.getTime() - 60000);
+      } else if (isAwaitingFutureDeparture) {
+        // Train is waiting at station with future timetable departure time (e.g. 12:30 PM from origin or halt)
+        // Exact passage ETA: Departure Time + Sectional Track Run Time + Intermediate Dwell Times
+        const runTimeMs = (distMeters / speedMs) * 1000;
+        let intermediateDwellMs = 0;
+        if (Array.isArray(train.schedule) && train.schedule.length > 1) {
+          for (let sIdx = 1; sIdx < train.schedule.length; sIdx++) {
+            const stop = train.schedule[sIdx];
+            if (typeof stop.distance === 'number' && stop.distance > 0 && stop.distance < item.trackDistanceKm && stop.isHalt) {
+              const stopDwell = (stop.expectedDepartureMs && stop.expectedArrivalMs)
+                ? Math.max(60000, stop.expectedDepartureMs - stop.expectedArrivalMs)
+                : 120000;
+              intermediateDwellMs += stopDwell;
+            }
+          }
+        }
+
+        const effectivePassageMs = depAnchorMs + runTimeMs + intermediateDwellMs;
+        passageTime = new Date(effectivePassageMs);
+        arrivalTimeSec = Math.max(0, Math.round((effectivePassageMs - now) / 1000));
+        closeTime = new Date(passageTime.getTime() - CROSSING_DETECTION_THRESHOLDS.CLOSURE_LEAD_SEC * 1000);
+        openTime = new Date(passageTime.getTime() + traverseDurationSec * 1000 + CROSSING_DETECTION_THRESHOLDS.GATE_CLEARANCE_BUFFER_SEC * 1000);
         crossBy = new Date(closeTime.getTime() - 60000);
       } else {
         const closureLeadSec = CROSSING_DETECTION_THRESHOLDS.CLOSURE_LEAD_SEC; // 720s (12 minutes)
@@ -1067,7 +1135,21 @@ export class TrainDetectionEngine {
       // Hysteresis window: entry at <= 3.5 km / <= 4.0 min; exit at > 3.8 km / > 4.5 min
       const closureDistLimit = wasClosed ? 3.8 : 3.5;
       const closureTimeLimit = wasClosed ? 4.5 : 4.0;
-      const isWithinImmediateClosureZone = primaryCand.isTraversing || (trackDistKm <= closureDistLimit || diffMinutesFirst <= closureTimeLimit);
+
+      const isTrainMovingTowardsCrossing = primaryCand.isTraversing ? true : Boolean(
+        !primaryCand.isAwaitingDeparture &&
+        !primaryCand.train.isStationary &&
+        !primaryCand.train.isStationaryAtPlatform &&
+        primaryCand.train.status !== 'YET_TO_START' &&
+        primaryCand.train.status !== 'NOT_STARTED' &&
+        primaryCand.train.status !== 'PLATFORM_BOARDING'
+      );
+
+      const isWithinImmediateClosureZone = primaryCand.isTraversing || (
+        isTrainMovingTowardsCrossing &&
+        trackDistKm <= closureDistLimit &&
+        diffMinutesFirst <= closureTimeLimit
+      );
       const isClosed = primaryCand.isTraversing || (
         isWithinImmediateClosureZone &&
         (now >= closureStartMs || timeToClosureSec <= 0) &&
@@ -1079,8 +1161,10 @@ export class TrainDetectionEngine {
       const approachDistLimit = wasApproaching ? 8.5 : 8.0;
       const approachTimeLimit = wasApproaching ? 13.0 : 12.0;
       const isApproaching = !isClosed && (
+        isTrainMovingTowardsCrossing &&
         trackDistKm <= approachDistLimit &&
-        diffMinutesFirst <= approachTimeLimit
+        diffMinutesFirst <= approachTimeLimit &&
+        (now >= closureStartMs || timeToClosureSec <= 0)
       );
 
       let newStatus = 'OPEN';
@@ -1170,12 +1254,12 @@ export class TrainDetectionEngine {
         forecastNote = statusReason;
         recommendation = 'CLEAR PASSAGE — PREDICTED OPEN';
       } else {
-        // Train is > 8.0 km away or > 10 min away: Roadway is OPEN with live countdown to next closure
+        // Train is > 8.0 km away or > 12 min away or awaiting departure: Roadway is OPEN with live countdown to next closure
         newStatus = 'OPEN';
         gateStatusLabel = 'PREDICTED OPEN';
         gateClassification = 'NO APPROACH DETECTED';
         legacyStatus = 'EXPECTED_OPEN';
-        predictionState = 'EXTENDED_APPROACH';
+        predictionState = primaryCand.isAwaitingDeparture ? 'DEPARTURE_AWAITED' : 'EXTENDED_APPROACH';
         countdownAvailable = true;
         timeToNextClosureSec = Math.max(1, timeToClosureSec);
         const timeToClosureMin = Number((timeToNextClosureSec / 60).toFixed(1));
@@ -1183,9 +1267,21 @@ export class TrainDetectionEngine {
         // OPEN crossing: NEVER display a predicted reopening time
         predictedReopenTime = null;
         remainingWaitSec = 0;
-        statusReason = isContinuous
-          ? `Train passage predicted in ~${Math.round(diffMinutesFirst)} min (${activeBlock.items.length} trains). Fatak is OPEN (Closes in ~${timeToClosureMin} min).`
-          : `Roadway open. Train #${train.number} on corridor (${trackDistKm.toFixed(1)} km away), expected passage in ~${Math.round(diffMinutesFirst)} min. Gate closes in ~${timeToClosureMin} min.`;
+
+        const depTimeFmt = primaryCand.train.expectedDepartureFormatted || primaryCand.train.expectedDeparture || (primaryCand.train.expectedDepartureMs ? new Date(primaryCand.train.expectedDepartureMs).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: true }) : null);
+        const arrTimeFmt = primaryCand.passageTime ? primaryCand.passageTime.toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: true }) : '';
+        const etaMinRound = Math.round(diffMinutesFirst);
+        const etaHours = Math.floor(etaMinRound / 60);
+        const etaRemMin = etaMinRound % 60;
+        const etaDurationStr = etaHours > 0 ? `~${etaHours} hr ${etaRemMin} min` : `~${etaMinRound} min`;
+
+        if (primaryCand.isAwaitingDeparture || primaryCand.train.status === 'YET_TO_START') {
+          statusReason = `Roadway open. Train #${train.number} scheduled departure at ${depTimeFmt || '12:30 PM'} from ${train.origin || 'Amritsar Jn'} (Delay: ${train.delayMinutes || 0}m). Exact passage arrival ETA: ${arrTimeFmt || '12:31 PM'} (in ${etaDurationStr}). Fatak closes in ~${Math.round(timeToClosureSec / 60)} min.`;
+        } else {
+          statusReason = isContinuous
+            ? `Train passage predicted in ~${Math.round(diffMinutesFirst)} min (${activeBlock.items.length} trains). Fatak is OPEN (Closes in ~${timeToClosureMin} min).`
+            : `Roadway open. Train #${train.number} on corridor (${trackDistKm.toFixed(1)} km away), expected passage in ~${Math.round(diffMinutesFirst)} min. Gate closes in ~${timeToClosureMin} min.`;
+        }
         forecastNote = statusReason;
         recommendation = 'CLEAR PASSAGE — PREDICTED OPEN';
       }
@@ -1211,6 +1307,13 @@ export class TrainDetectionEngine {
 
       const trainRoute = (train.origin && train.destination) ? `${train.origin} → ${train.destination}` : 'Amritsar Corridor';
 
+      const depTimeFmt = primaryCand.train.expectedDepartureFormatted || primaryCand.train.expectedDeparture || (primaryCand.train.expectedDepartureMs ? new Date(primaryCand.train.expectedDepartureMs).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: true }) : null);
+      const arrTimeFmt = primaryCand.passageTime ? primaryCand.passageTime.toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: true }) : '';
+      const etaMinRound = Math.round(diffMinutesFirst);
+      const etaHours = Math.floor(etaMinRound / 60);
+      const etaRemMin = etaMinRound % 60;
+      const etaDurationStr = etaHours > 0 ? `~${etaHours} hr ${etaRemMin} min` : `~${etaMinRound} min`;
+
       const upcomingTrainPayload = {
         id: train.id,
         number: train.number,
@@ -1219,16 +1322,26 @@ export class TrainDetectionEngine {
         trainName: train.name,
         type: train.type,
         dataState: train.dataState,
-        speedKmH,
-        speedKmph: speedKmH,
+        speedKmH: primaryCand.isAwaitingDeparture ? 0 : speedKmH,
+        speedKmph: primaryCand.isAwaitingDeparture ? 0 : speedKmH,
+        speedText: primaryCand.isAwaitingDeparture ? '0 km/h (Yet to start)' : `${speedKmH} km/h (Sectional)`,
         hasLiveSpeedMeasurement: primaryCand.hasLiveSpeedMeasurement,
-        speedSource: primaryCand.speedSource,
+        speedSource: primaryCand.isAwaitingDeparture ? 'AT_STATION_PLATFORM' : primaryCand.speedSource,
         etaCalculationMethod: primaryCand.etaCalculationMethod,
         predictionConfidence: primaryCand.predictionConfidence,
         direction: train.direction,
         distanceKm: Number(trackDistKm.toFixed(2)),
         etaMinutes: Number(primaryCand.etaMinutes.toFixed(1)),
         estimatedPassageTime: expectedTrainArrival,
+        expectedDeparture: depTimeFmt,
+        expectedDepartureMs: primaryCand.train.expectedDepartureMs,
+        expectedArrivalFormatted: arrTimeFmt,
+        delayMinutes: train.delayMinutes || 0,
+        status: primaryCand.isAwaitingDeparture ? 'YET_TO_START' : train.status,
+        isStationary: Boolean(primaryCand.isAwaitingDeparture || train.isStationary),
+        timingSummary: primaryCand.isAwaitingDeparture 
+          ? `Yet to start from ${train.origin || 'Amritsar Jn'} • Departure: ${depTimeFmt || '12:30 PM'} (Delay: ${train.delayMinutes || 0}m) • Exact arrival: ${arrTimeFmt} (in ${etaDurationStr})`
+          : `Approaching • Arrival ETA: ${arrTimeFmt} (in ${etaDurationStr})`,
         rakeLengthM,
         currentStationName: train.currentStationName || null,
         currentStationCode: train.currentStationCode || null,
@@ -1237,15 +1350,34 @@ export class TrainDetectionEngine {
         destination: train.destination || 'Amritsar Sector'
       };
 
-      const subsequentTrains = primaryCandidates.slice(1).map(c => ({
-        trainNumber: c.train.number,
-        trainName: c.train.name,
-        direction: c.train.direction,
-        speedKmph: c.speedKmH,
-        distanceKm: Number(c.trackDistanceKm.toFixed(2)),
-        etaMinutes: Number(c.etaMinutes.toFixed(1)),
-        estimatedPassageTime: c.passageTime.toISOString()
-      }));
+      const subsequentTrains = primaryCandidates.slice(1).map(c => {
+        const arrTimeStr = new Intl.DateTimeFormat('en-IN', {
+          timeZone: 'Asia/Kolkata',
+          hour: 'numeric',
+          minute: '2-digit',
+          hour12: true
+        }).format(c.passageTime).toLowerCase();
+
+        return {
+          trainNumber: c.train.number,
+          trainName: c.train.name,
+          direction: c.train.direction,
+          status: c.train.status || c.train.operationalStatus || (c.isAwaitingDeparture ? 'YET_TO_START' : 'IN_TRANSIT'),
+          speedKmph: (c.isAwaitingDeparture || c.train.speedKmH === 0) ? 0 : c.speedKmH,
+          speedText: (c.isAwaitingDeparture || c.train.speedKmH === 0) ? '0 km/h (Yet to start)' : `${Math.round(c.speedKmH)} km/h`,
+          distanceKm: Number(c.trackDistanceKm.toFixed(2)),
+          etaMinutes: Number(c.etaMinutes.toFixed(1)),
+          expectedDeparture: c.train.expectedDeparture || null,
+          expectedDepartureMs: c.train.expectedDepartureMs || null,
+          expectedArrivalFormatted: arrTimeStr,
+          timingSummary: c.train.isAwaitingFutureDeparture && c.train.expectedDeparture
+            ? `Departs ${c.train.expectedDeparture} · ETA: ${arrTimeStr}`
+            : `ETA: ${arrTimeStr}`,
+          isStationary: Boolean(c.isAwaitingDeparture || c.train.isStationary),
+          isAwaitingDeparture: Boolean(c.isAwaitingDeparture),
+          estimatedPassageTime: c.passageTime.toISOString()
+        };
+      });
 
       return {
         status: newStatus,
@@ -1452,7 +1584,7 @@ export class TrainDetectionEngine {
         status: 'OPEN',
         statusReason,
         legacyStatus: 'EXPECTED_OPEN',
-        predictionState: activeCorridorLiveTrains.length > 0 ? 'CLEAR_PASSAGE' : 'TELEMETRY_UNAVAILABLE',
+        predictionState: 'NO_RELIABLE_APPROACH',
         countdownAvailable: false,
         gateStatusClassification: activeCorridorLiveTrains.length > 0 ? 'NO APPROACH DETECTED' : 'CLEAR PASSAGE',
         gateStatusLabel: 'OPEN',

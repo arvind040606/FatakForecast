@@ -80,7 +80,7 @@ export interface CrossingTrainDisplayInfo {
 export function formatTrainSpeed(train: SectorTrain | any): string {
   if (!train) return '~55 km/h (Sectional)';
   if (train.status === 'TERMINATED') return '0 km/h (Terminus)';
-  if (train.status === 'NOT_STARTED' || train.status === 'not-started') return '0 km/h (Yet to start)';
+  if (train.status === 'NOT_STARTED' || train.status === 'not-started' || train.status === 'YET_TO_START') return '0 km/h (Yet to start)';
   if (train.isStationaryAtPlatform || train.isStationary || train.status === 'PLATFORM_BOARDING' || train.status === 'STATIONARY' || train.speedKmH === 0) {
     return 'Stationary at Platform (0 km/h)';
   }
@@ -432,11 +432,24 @@ export function getCrossingTimingDetails(
       trainArrivalEtaText = 'Barriers locked · Reopening shortly';
     }
   } else if (upcomingTrain || isClosingSoon) {
+    const isYetToStart = upcomingTrain?.status === 'YET_TO_START' || upcomingTrain?.status === 'NOT_STARTED' || upcomingTrain?.isStationary;
+    const depTimeStr = upcomingTrain?.expectedDeparture || (upcomingTrain?.expectedDepartureMs ? format12h(upcomingTrain.expectedDepartureMs) : null);
+
     if (trainArrivalSec > 60) {
       const arrMin = Math.round(trainArrivalSec / 60);
-      trainArrivalEtaText = trainArrivalTimeStr 
-        ? `Train arriving in ${arrMin} min (${trainArrivalTimeStr})`
-        : `Train arriving in ${arrMin} min`;
+      const arrHours = Math.floor(arrMin / 60);
+      const arrRemMin = arrMin % 60;
+      const durationStr = arrHours > 0 ? `~${arrHours} hr ${arrRemMin} min` : `~${arrMin} min`;
+
+      if (isYetToStart && depTimeStr) {
+        trainArrivalEtaText = trainArrivalTimeStr
+          ? `Departs ${depTimeStr} · Crossing ETA: ${trainArrivalTimeStr} (in ${durationStr})`
+          : `Departs ${depTimeStr} · in ${durationStr}`;
+      } else {
+        trainArrivalEtaText = trainArrivalTimeStr 
+          ? `Train arriving at ${trainArrivalTimeStr} (in ${durationStr})`
+          : `Train arriving in ${durationStr}`;
+      }
     } else if (trainArrivalSec > 0) {
       trainArrivalEtaText = trainArrivalTimeStr 
         ? `Train arriving in <1 min (${trainArrivalTimeStr})`
@@ -601,11 +614,12 @@ export function getCrossingTimingDetails(
       speedText: formatTrainSpeed(upcomingTrain),
       direction: upcomingTrain.direction || crossing.trainDirection || undefined,
       route: (upcomingTrain.origin && upcomingTrain.destination) ? `${upcomingTrain.origin} → ${upcomingTrain.destination}` : (crossing.line || 'Amritsar Corridor'),
-      status: isClosedNow ? 'TRAVERSING / TRACK OCCUPIED' : (isClosingSoon ? 'APPROACHING' : 'IN_TRANSIT'),
+      status: isClosedNow ? 'TRAVERSING / TRACK OCCUPIED' : (isClosingSoon ? 'APPROACHING' : (upcomingTrain.status === 'YET_TO_START' ? 'YET_TO_START' : (upcomingTrain.isStationary ? 'PLATFORM_BOARDING' : 'IN_TRANSIT'))),
+      isStationary: Boolean(upcomingTrain.status === 'YET_TO_START' || upcomingTrain.isStationary || upcomingTrain.speedKmH === 0),
       dataState: upcomingTrain.dataState,
       distanceKm: typeof crossing.distanceAlongTrackKm === 'number' ? crossing.distanceAlongTrackKm : (upcomingTrain.distanceKm || null),
       timingText: trainArrivalEtaText,
-      isApproaching: true,
+      isApproaching: !Boolean(upcomingTrain.status === 'YET_TO_START' || upcomingTrain.isStationary),
       locationText: typeof crossing.distanceAlongTrackKm === 'number' ? `~${crossing.distanceAlongTrackKm.toFixed(1)} km away` : 'On Approach Track'
     };
   } else if (
